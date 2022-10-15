@@ -14,8 +14,12 @@ if (CMAKE_VERSION VERSION_GREATER_EQUAL 3.22)
   cmake_policy(SET CMP0128 NEW)
 endif()
 
+
 add_subdirectory(3rdParty/argparse)
+
+find_package(MOAB REQUIRED PATH_SUFFIXES lib lib/cmake)
 
 add_executable(gprt-h5m src/main.cpp)
 target_compile_features(gprt-h5m PUBLIC cxx_std_14)
-target_link_libraries(gprt-h5m PUBLIC argparse)
+target_link_libraries(gprt-h5m PUBLIC argparse MOAB)
+

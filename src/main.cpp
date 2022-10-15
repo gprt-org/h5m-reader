@@ -1,9 +1,11 @@
 
 #include <iostream>
+#include <memory>
 #include <string>
 
-
 #include "argparse/argparse.hpp"
+
+#include "moab/Core.hpp"
 
 int main(int argc, char** argv) {
 
@@ -22,7 +24,12 @@ int main(int argc, char** argv) {
 
     auto filename = args.get<std::string>("filename");
 
-    std::cout << "Filename is: " << filename << std::endl;
+    std::shared_ptr<moab::Core> mbi = std::make_shared<moab::Core>();
+
+    std::cout << "Loading " << filename << "..." << std::endl;
+    mbi->load_file(filename.c_str());
+
+
 
     return 0;
 }
