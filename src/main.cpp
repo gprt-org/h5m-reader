@@ -7,6 +7,8 @@
 
 #include "moab/Core.hpp"
 
+#include "gprt.h"
+
 int main(int argc, char** argv) {
 
     argparse::ArgumentParser args("GPRT H5M READER");
@@ -29,6 +31,7 @@ int main(int argc, char** argv) {
     std::cout << "Loading " << filename << "..." << std::endl;
     mbi->load_file(filename.c_str());
 
+    GPRTContext gprt = gprtContextCreate(nullptr, 1);
 
 
     return 0;

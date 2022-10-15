@@ -1,3 +1,6 @@
 [submodule "3rdParty/argparse"]
 	path = 3rdParty/argparse
 	url = https://github.com/p-ranav/argparse.git
+[submodule "3rdParty/gprt"]
+	path = 3rdParty/gprt
+	url = https://github.com/general-purpose-raytracing-toolkit/gprt
