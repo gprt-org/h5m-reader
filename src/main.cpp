@@ -302,6 +302,16 @@ int main(int argc, char** argv) {
       lastypos = ypos;
     }
     int state = glfwGetMouseButton(window, GLFW_MOUSE_BUTTON_LEFT);
+    int rstate = glfwGetMouseButton(window, GLFW_MOUSE_BUTTON_RIGHT);
+
+    int w_state = glfwGetKey(window, GLFW_KEY_W);
+    int c_state = glfwGetKey(window, GLFW_KEY_C);
+    int ctrl_state = glfwGetKey(window, GLFW_KEY_LEFT_CONTROL);
+
+    // close window on Ctrl-W press
+    if (w_state && ctrl_state) { break; }
+    // close window on Ctrl-C press
+    if (c_state && ctrl_state) { break; }
 
     // If we click the mouse, we should rotate the camera
     if (state == GLFW_PRESS || firstFrame)
@@ -343,6 +353,27 @@ int main(int argc, char** argv) {
       gprtRayGenSet3fv    (rayGen,"camera.dir_00",(float*)&camera_d00);
       gprtRayGenSet3fv    (rayGen,"camera.dir_du",(float*)&camera_ddu);
       gprtRayGenSet3fv    (rayGen,"camera.dir_dv",(float*)&camera_ddv);
+      gprtBuildSBT(context, GPRT_SBT_RAYGEN);
+    }
+
+    if (rstate == GLFW_PRESS) {
+      float dy = ypos - lastypos;
+
+      float3 view_vec = lookFrom - lookAt;
+
+      if (dy > 0.0) {
+        view_vec.x *= 0.9;
+        view_vec.y *= 0.9;
+        view_vec.z *= 0.9;
+      } else {
+        view_vec.x *= 1.1;
+        view_vec.y *= 1.1;
+        view_vec.z *= 1.1;
+      }
+
+      lookFrom = lookAt + view_vec;
+
+      gprtRayGenSet3fv(rayGen, "camera.pos", (float*)&lookFrom);
       gprtBuildSBT(context, GPRT_SBT_RAYGEN);
     }
 
