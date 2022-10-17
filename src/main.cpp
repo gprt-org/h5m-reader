@@ -325,6 +325,7 @@ int main(int argc, char** argv) {
     }
 
     if (rstate == GLFW_PRESS) {
+      glfwGetCursorPos(window, &xpos, &ypos);
       float dy = ypos - lastypos;
 
       float3 view_vec = lookFrom - lookAt;
@@ -334,15 +335,16 @@ int main(int argc, char** argv) {
         view_vec.y *= 0.95;
         view_vec.z *= 0.95;
       } else {
-        view_vec.x *= 1.15;
-        view_vec.y *= 1.15;
-        view_vec.z *= 1.15;
+        view_vec.x *= 1.05;
+        view_vec.y *= 1.05;
+        view_vec.z *= 1.05;
       }
 
       lookFrom = lookAt + view_vec;
 
       gprtRayGenSet3fv(rayGen, "camera.pos", (float*)&lookFrom);
       gprtBuildSBT(context, GPRT_SBT_RAYGEN);
+
     }
 
     // Now, trace rays
