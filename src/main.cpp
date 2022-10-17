@@ -10,6 +10,8 @@
 #include "moab/Core.hpp"
 #include "moab/Range.hpp"
 
+#include "MOABDirectAccess.h"
+
 #include "gprt.h"
 
 #include "deviceCode.h"
@@ -71,54 +73,19 @@ int main(int argc, char** argv) {
   rval = mbi->load_file(filename.c_str());
   MOAB_CHECK_ERROR(rval);
 
-  // get all triangles
-  moab::Range tris;
-  rval = mbi->get_entities_by_dimension(0, 2, tris, true);
-  MB_CHK_SET_ERR(rval, "Failed to get triangles from MOAB instance");
-  std::cout << tris.size() << " triangles found in the model" << std::endl;
+  // create a direct access manager
+  MBDirectAccess mdam (mbi.get());
+  // setup datastructs storing internal information
+  mdam.setup(true);
 
-  if (!tris.all_of_type(moab::MBTRI)) {
-      std::cout << "Non triangle elements present in " << filename << ". Exiting..." << std::endl;
-      return 1;
-  }
+  int n_vertices = mdam.xyz().size() / 3;
+  int n_tris = mdam.conn().size() / 3;
 
-  // get the direct pointer to the triangle connectivity (assumes contiguous block for entities)
-  moab::EntityHandle* tri_conn;
-  int n_tris;
-  int element_stride;
-  rval = mbi->connect_iterate(tris.begin(), tris.end(), tri_conn, element_stride, n_tris);
-  MB_CHK_SET_ERR_CONT(rval, "Failed to get direct access pointer to triangles");
-  std::cout << "Got connectivity for " << n_tris << " triangles" << std::endl;
-  std::cout << "Element stride " << element_stride << std::endl;
+  // clear out the MOAB interface, we don't need it anymore
+  rval = mbi->delete_mesh();
+  MOAB_CHECK_ERROR(rval);
 
-  if (n_tris != tris.size()) {
-    std::cout << "Triangle EH space is discontiguous. This is unsupported at this time." << std::endl;
-    return 1;
-  }
-
-  std::vector<int> conn(3*n_tris);
-  for (int i = 0; i < conn.size(); i++) { conn[i] = tri_conn[i] -1; }
-  // setup vertices
-  moab::Range verts;
-  rval = mbi->get_entities_by_dimension(0, 0, verts, true);
-  MB_CHK_SET_ERR_CONT(rval, "Failed to get all elements of dimension 0 (vertices)");
-
-  // set vertex coordinate pointers
-  double* x;
-  double* y;
-  double* z;
-  int n_vertices;
-  rval = mbi->coords_iterate(verts.begin(), verts.end(), x, y, z, n_vertices);
-  MB_CHK_SET_ERR_CONT(rval, "Failed to get direct access to vertex elements");
-
-
-  std::vector<double> xyz(3*n_vertices);
-  for (int i = 0; i < n_vertices; i++) {
-    int offset = 3 * i;
-    xyz[offset] = x[i];
-    xyz[offset+1] = y[i];
-    xyz[offset+2] = z[i];
-  }
+  mbi.reset();
 
   // start up GPRT
   GPRTContext context = gprtContextCreate(nullptr, 1);
@@ -181,9 +148,9 @@ int main(int argc, char** argv) {
   // aabb mesh
   // ------------------------------------------------------------------
   GPRTBuffer vertexBuffer
-    = gprtDeviceBufferCreate(context, GPRT_DOUBLE3, n_vertices, xyz.data());
+    = gprtDeviceBufferCreate(context, GPRT_DOUBLE3, n_vertices, mdam.xyz().data());
   GPRTBuffer indexBuffer
-    = gprtDeviceBufferCreate(context, GPRT_INT3, n_tris, conn.data());
+    = gprtDeviceBufferCreate(context, GPRT_INT3, n_tris, mdam.conn().data());
   GPRTBuffer aabbPositionsBuffer
     = gprtDeviceBufferCreate(context, GPRT_FLOAT3, 2*n_tris, nullptr);
 
@@ -208,6 +175,7 @@ int main(int argc, char** argv) {
   gprtAccelBuild(context, aabbAccel);
 
   // compute centroid to look at
+  const auto& xyz = mdam.xyz();
   double3 aabbmin = double3(xyz[0],xyz[1],xyz[2]);
   double3 aabbmax = aabbmin;
   for (uint32_t i = 1; i < n_vertices; ++i) {
@@ -362,13 +330,13 @@ int main(int argc, char** argv) {
       float3 view_vec = lookFrom - lookAt;
 
       if (dy > 0.0) {
-        view_vec.x *= 0.9;
-        view_vec.y *= 0.9;
-        view_vec.z *= 0.9;
+        view_vec.x *= 0.95;
+        view_vec.y *= 0.95;
+        view_vec.z *= 0.95;
       } else {
-        view_vec.x *= 1.1;
-        view_vec.y *= 1.1;
-        view_vec.z *= 1.1;
+        view_vec.x *= 1.15;
+        view_vec.y *= 1.15;
+        view_vec.z *= 1.15;
       }
 
       lookFrom = lookAt + view_vec;

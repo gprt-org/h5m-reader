@@ -26,7 +26,7 @@ embed_spirv(
       ${CMAKE_CURRENT_SOURCE_DIR}/src/deviceCode.hlsl
   )
 
-  add_executable(gprt-h5m src/main.cpp)
+  add_executable(gprt-h5m src/main.cpp src/MOABDirectAccess.cpp)
   target_compile_features(gprt-h5m PUBLIC cxx_std_14)
   target_include_directories(gprt-h5m PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
   target_link_libraries(gprt-h5m PUBLIC dbl_deviceCode argparse MOAB gprt::gprt glfw ${OPENGL_gl_LIBRARY})
