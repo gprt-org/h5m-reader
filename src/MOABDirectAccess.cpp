@@ -90,6 +90,10 @@ MBDirectAccess::clear()
   tx_.clear();
   ty_.clear();
   tz_.clear();
+
+  xyz_.clear();
+  conn_.clear();
+
 }
 
 void

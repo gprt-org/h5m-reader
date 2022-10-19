@@ -154,6 +154,9 @@ int main(int argc, char** argv) {
   GPRTBuffer aabbPositionsBuffer
     = gprtDeviceBufferCreate(context, GPRT_FLOAT3, 2*n_tris, nullptr);
 
+  // clear out mdam data now that it's been transferred to device
+  mdam.clear();
+
   GPRTGeom dpCubeGeom
     = gprtGeomCreate(context, DPTriangleType);
   gprtAABBsSetPositions(dpCubeGeom, aabbPositionsBuffer,
