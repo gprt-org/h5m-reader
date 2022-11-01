@@ -20,7 +20,7 @@ public:
   MBDirectAccess(std::shared_ptr<Interface> mbi) : mbi(mbi.get()) {};
 
   //! \brief Initialize internal structures
-  void setup(bool store_internal=false);
+  void setup();
 
   //! \brief Reset internal data structures, but maintain MOAB isntance
   void clear();
@@ -42,29 +42,24 @@ public:
     return true;
   }
 
-  //! \brief Get the coordinates of a triangle as MOAB CartVect's
-  inline std::array<moab::CartVect, 3> get_mb_coords(const EntityHandle& tri) {
+  const double** get_coord_ptrs(const EntityHandle &elem) {
 
-    // determine the correct index to use
-    int idx = 0;
-    auto fe = first_elements_[idx];
+    auto fe_it = first_elements_.begin();
+    size_t conn_offset {0};
 
     while(true) {
-      if (tri - fe.first < fe.second) { break; }
-      idx++;
-      fe = first_elements_[idx];
+      if (elem - fe_it->first < fe_it->second) { break; }
+      conn_offset += fe_it->second;
+      fe_it++;
     }
 
-    size_t conn_idx = element_stride_ * (tri - fe.first);
-    size_t i0 = vconn_[idx][conn_idx] - 1;
-    size_t i1 = vconn_[idx][conn_idx + 1] - 1;
-    size_t i2 = vconn_[idx][conn_idx + 2] - 1;
+    conn_offset += elem - fe_it->first;
 
-    moab::CartVect v0(tx_[idx][i0], ty_[idx][i0], tz_[idx][i0]);
-    moab::CartVect v1(tx_[idx][i1], ty_[idx][i1], tz_[idx][i1]);
-    moab::CartVect v2(tx_[idx][i2], ty_[idx][i2], tz_[idx][i2]);
+    const double* i0 = xyz_.data() + conn_[conn_offset];
+    const double* i1 = xyz_.data() + conn_[conn_offset + 1];
+    const double* i2 = xyz_.data() + conn_[conn_offset + 2];
 
-    return {v0, v1, v2};
+    return nullptr;
   }
 
   // Accessors
@@ -85,14 +80,10 @@ private:
   int num_elements_ {-1}; //!< Number of elements in the manager
   int num_vertices_ {-1}; //!< Number of vertices in the manager
   int element_stride_ {-1}; //!< Number of vertices used by each element
-  std::vector<std::pair<EntityHandle, size_t>> first_elements_; //!< Pairs of first element and length pairs for contiguous blocks of memory
-  std::vector<const EntityHandle*> vconn_; //!< Storage array(s) for the connectivity array
-  std::vector<double*> tx_; //!< Storage array(s) for vertex x coordinates
-  std::vector<double*> ty_; //!< Storage array(s) for vertex y coordinates
-  std::vector<double*> tz_; //!< Storage array(s) for vertex z coordinates
-
+  std::vector<std::pair<EntityHandle, size_t>> first_elements_; //!< Pairs of first element and length pairs for contiguous blocks of memorys
   std::vector<double> xyz_; //!< Storage location for vertex data (optionally used)
   std::vector<int32_t> conn_; //!< Storage location for connectivity data (optionally used)
+  bool internal_storage_; //!< indicates whether or not information is stored internally
 };
 
 #endif // include guard

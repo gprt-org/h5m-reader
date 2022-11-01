@@ -32,13 +32,13 @@ GPRT_RAYGEN_PROGRAM(AABBRayGen, (RayGenData, record))
 {
   Payload payload;
   uint2 pixelID = DispatchRaysIndex().xy;
-  float2 screen = (float2(pixelID) + 
+  float2 screen = (float2(pixelID) +
                   float2(.5f, .5f)) / float2(record.fbSize);
   const int fbOfs = pixelID.x + record.fbSize.x * pixelID.y;
 
   RayDesc rayDesc;
   rayDesc.Origin = record.camera.pos;
-  rayDesc.Direction = 
+  rayDesc.Direction =
     normalize(record.camera.dir_00
     + screen.x * record.camera.dir_du
     + screen.y * record.camera.dir_dv
@@ -67,7 +67,7 @@ GPRT_RAYGEN_PROGRAM(AABBRayGen, (RayGenData, record))
 
 GPRT_MISS_PROGRAM(miss, (MissProgData, record), (Payload, payload))
 {
-  uint2 pixelID = DispatchRaysIndex().xy;  
+  uint2 pixelID = DispatchRaysIndex().xy;
   int pattern = (pixelID.x / 8) ^ (pixelID.y/8);
   payload.color = (pattern & 1) ? record.color1 : record.color0;
 }
@@ -90,8 +90,8 @@ GPRT_COMPUTE_PROGRAM(DPTriangle, (DPTriangleData, record))
   double3 C = gprt::load<double3>(record.vertex, indices.z);
   double3 dpaabbmin = min(min(A, B), C);
   double3 dpaabbmax = max(max(A, B), C);
-  float3 fpaabbmin = float3(dpaabbmin) - float3(FLT_EPSILON, FLT_EPSILON, FLT_EPSILON); // todo, round this below smallest float 
-  float3 fpaabbmax = float3(dpaabbmax) + float3(FLT_EPSILON, FLT_EPSILON, FLT_EPSILON); // todo, round this below smallest float 
+  float3 fpaabbmin = float3(dpaabbmin) - float3(FLT_EPSILON, FLT_EPSILON, FLT_EPSILON); // todo, round this below smallest float
+  float3 fpaabbmax = float3(dpaabbmax) + float3(FLT_EPSILON, FLT_EPSILON, FLT_EPSILON); // todo, round this below smallest float
   gprt::store(record.aabbs, 2 * primID + 0, fpaabbmin);
   gprt::store(record.aabbs, 2 * primID + 1, fpaabbmax);
 }
@@ -106,8 +106,12 @@ double3 dcross (in double3 a, in double3 b) { return double3(a.y*b.z-a.z*b.y, a.
 
 float next_after(float a) {
   uint a_ = asuint(a);
-  a_ += a < 0 ? -1 : 1;
-  return asfloat(a);
+  if (a < 0) {
+    a_--;
+  } else {
+    a_++;
+  }
+  return asfloat(a_);
 }
 
 /* Function to return the vertex with the lowest coordinates. To force the same
@@ -161,7 +165,7 @@ GPRT_INTERSECTION_PROGRAM(DPTrianglePlucker, (DPTriangleData, record))
 
 
   // Just skip if we for some reason cull both...
-  if ( ((flags & RAY_FLAG_CULL_BACK_FACING_TRIANGLES) != 0) && 
+  if ( ((flags & RAY_FLAG_CULL_BACK_FACING_TRIANGLES) != 0) &&
        ((flags & RAY_FLAG_CULL_FRONT_FACING_TRIANGLES) != 0)) return;
 
   bool useOrientation = false;
@@ -169,7 +173,7 @@ GPRT_INTERSECTION_PROGRAM(DPTrianglePlucker, (DPTriangleData, record))
   if ((flags & RAY_FLAG_CULL_BACK_FACING_TRIANGLES) != 0) {
     orientation = -1;
     useOrientation = true;
-  } 
+  }
   else if ((flags & RAY_FLAG_CULL_FRONT_FACING_TRIANGLES) != 0) {
     orientation = 1;
     useOrientation = true;
@@ -189,7 +193,7 @@ GPRT_INTERSECTION_PROGRAM(DPTrianglePlucker, (DPTriangleData, record))
   double3 direction = double3(raydata2.x, raydata2.y, raydata2.z);//ObjectRayDirection();
   double tMin = raydata1.w;
   double tCurrent = raydata2.w;
-  
+
   const double3 raya = direction;
   const double3 rayb = dcross(direction, origin);
 
@@ -208,7 +212,7 @@ GPRT_INTERSECTION_PROGRAM(DPTrianglePlucker, (DPTriangleData, record))
   // If orientation is set, confirm that sign of plucker_coordinate indicate
   // correct orientation of intersection
   if( useOrientation &&  orientation * plucker_coord1 > 0) return;
-  
+
   // If the orientation is not specified, all plucker_coords must be the same sign or
   // zero.
   else if( ( 0.0 < plucker_coord0 && 0.0 > plucker_coord1 ) || ( 0.0 > plucker_coord0 && 0.0 < plucker_coord1 ) ) return;
@@ -228,8 +232,8 @@ GPRT_INTERSECTION_PROGRAM(DPTrianglePlucker, (DPTriangleData, record))
   }
 
   // check for coplanar case to avoid dividing by zero
-  if( 0.0 == plucker_coord0 && 0.0 == plucker_coord1 && 0.0 == plucker_coord2 ) { 
-    return; // EXIT_EARLY; 
+  if( 0.0 == plucker_coord0 && 0.0 == plucker_coord1 && 0.0 == plucker_coord2 ) {
+    return; // EXIT_EARLY;
   }
 
   // get the distance to intersection
@@ -260,7 +264,7 @@ GPRT_INTERSECTION_PROGRAM(DPTrianglePlucker, (DPTriangleData, record))
 
   if (t > tCurrent) return;
   if (t < tMin) return;
-  
+
   // update current double precision thit
   gprt::store<double>(record.dpRays, fbOfs * 8 + 7, t);
 
@@ -270,4 +274,3 @@ GPRT_INTERSECTION_PROGRAM(DPTrianglePlucker, (DPTriangleData, record))
   if (double(f32t) < t) f32t = next_after(f32t);
   ReportHit(f32t, /*hitKind*/ 0, attr);
 }
-

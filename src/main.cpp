@@ -29,7 +29,7 @@
   std::cout << "#gprt.sample(main): " << message << std::endl;   \
   std::cout << GPRT_TERMINAL_DEFAULT;
 
-extern std::map<std::string, std::vector<uint8_t>> dbl_deviceCode;
+extern GPRTProgram dbl_deviceCode;
 
 #define MOAB_CHECK_ERROR(EC) if (EC != moab::MB_SUCCESS) return 1;
 
@@ -76,7 +76,7 @@ int main(int argc, char** argv) {
   // create a direct access manager
   MBDirectAccess mdam (mbi.get());
   // setup datastructs storing internal information
-  mdam.setup(true);
+  mdam.setup();
 
   int n_vertices = mdam.xyz().size() / 3;
   int n_tris = mdam.conn().size() / 3;
@@ -142,7 +142,7 @@ int main(int argc, char** argv) {
     = gprtMissCreate(context,module,"miss",sizeof(MissProgData),
                         missVars,-1);
 
-  gprtBuildPrograms(context);
+  gprtBuildPipeline(context);
 
   // ------------------------------------------------------------------
   // aabb mesh
@@ -171,7 +171,7 @@ int main(int argc, char** argv) {
   gprtComputeSetBuffer(DPTriangleBoundsProgram, "aabbs", aabbPositionsBuffer);
 
   // compute AABBs in parallel with a compute shader
-  gprtBuildSBT(context, GPRT_SBT_COMPUTE);
+  gprtBuildShaderBindingTable(context, GPRT_SBT_COMPUTE);
   gprtComputeLaunch1D(context, DPTriangleBoundsProgram, n_tris);
 
   GPRTAccel aabbAccel = gprtAABBAccelCreate(context, 1, &dpCubeGeom);
@@ -211,7 +211,7 @@ int main(int argc, char** argv) {
 
   // ----------- set raygen variables  ----------------------------
   GPRTBuffer frameBuffer
-    = gprtHostPinnedBufferCreate(context, GPRT_INT, fbSize.x*fbSize.y);
+    = gprtHostBufferCreate(context, GPRT_INT, fbSize.x*fbSize.y);
 
   // need this to communicate double precision rays to intersection program
   // ray origin xyz + tmin, then ray direction xyz + tmax
@@ -230,7 +230,8 @@ int main(int argc, char** argv) {
   // build *SBT* required to trace the groups
   // ##################################################################
 
-  gprtBuildSBT(context, GPRT_SBT_ALL);
+  gprtBuildPipeline(context);
+  gprtBuildShaderBindingTable(context, GPRT_SBT_ALL);
 
 // ##################################################################
   // create a window we can use to display and interact with the image
@@ -324,7 +325,7 @@ int main(int argc, char** argv) {
       gprtRayGenSet3fv    (rayGen,"camera.dir_00",(float*)&camera_d00);
       gprtRayGenSet3fv    (rayGen,"camera.dir_du",(float*)&camera_ddu);
       gprtRayGenSet3fv    (rayGen,"camera.dir_dv",(float*)&camera_ddv);
-      gprtBuildSBT(context, GPRT_SBT_RAYGEN);
+      gprtBuildShaderBindingTable(context, GPRT_SBT_RAYGEN);
     }
 
     if (rstate == GLFW_PRESS) {
@@ -346,7 +347,7 @@ int main(int argc, char** argv) {
       lookFrom = lookAt + view_vec;
 
       gprtRayGenSet3fv(rayGen, "camera.pos", (float*)&lookFrom);
-      gprtBuildSBT(context, GPRT_SBT_RAYGEN);
+      gprtBuildShaderBindingTable(context, GPRT_SBT_RAYGEN);
 
     }
 
