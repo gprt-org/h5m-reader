@@ -26,31 +26,33 @@
 
 struct Payload
 {
-[[vk::location(0)]] float3 color;
+// maybe can remove?
+[[vk::location(0)]]
+double dist;
 };
 
 GPRT_RAYGEN_PROGRAM(AABBRayGen, (RayGenData, record))
 {
   Payload payload;
-  uint2 pixelID = DispatchRaysIndex().xy;
-  float2 screen = (float2(pixelID) +
-                  float2(.5f, .5f)) / float2(record.fbSize);
-  const int fbOfs = pixelID.x + record.fbSize.x * pixelID.y;
+  uint3 threadID = DispatchRaysIndex();
+
+  uint3 ray_dims = DispatchRaysDimensions();
+  LCGRand my_rng = get_rng(record.frameId, threadID.xy, ray_dims.xy);
 
   RayDesc rayDesc;
-  rayDesc.Origin = record.camera.pos;
-  rayDesc.Direction =
-    normalize(record.camera.dir_00
-    + screen.x * record.camera.dir_du
-    + screen.y * record.camera.dir_dv
-  );
+  rayDesc.Origin = float3(0.0, 0.0, 0.0);
+  // generate a random ray direction
+  rayDesc.Direction = float3(lcg_randomf(my_rng), lcg_randomf(my_rng), lcg_randomf(my_rng));
+  rayDesc.Direction *= 2.0;
+  rayDesc.Direction -= 1.0;
+  rayDesc.Direction = normalize(rayDesc.Direction);
   rayDesc.TMin = 0.0;
   rayDesc.TMax = 10000.0;
   RaytracingAccelerationStructure world = gprt::getAccelHandle(record.world);
 
   // store double precision ray
-  gprt::store(record.dpRays, fbOfs * 2 + 0, double4(rayDesc.Origin.x, rayDesc.Origin.y, rayDesc.Origin.z, rayDesc.TMin));
-  gprt::store(record.dpRays, fbOfs * 2 + 1, double4(rayDesc.Direction.x, rayDesc.Direction.y, rayDesc.Direction.z, rayDesc.TMax));
+  gprt::store(record.dpRays, threadID.x * 2 + 0, double4(rayDesc.Origin.x, rayDesc.Origin.y, rayDesc.Origin.z, rayDesc.TMin));
+  gprt::store(record.dpRays, threadID.x * 2 + 1, double4(rayDesc.Direction.x, rayDesc.Direction.y, rayDesc.Direction.z, rayDesc.TMax));
 
   TraceRay(
     world, // the tree
@@ -63,23 +65,17 @@ GPRT_RAYGEN_PROGRAM(AABBRayGen, (RayGenData, record))
     payload // the payload IO
   );
 
-  uint3 ray_dims = DispatchRaysDimensions();
-  LCGRand my_rng = get_rng(record.frameId, pixelID, ray_dims.xy);
-
-  float3 rnd_color = {lcg_randomf(my_rng), lcg_randomf(my_rng), lcg_randomf(my_rng)};
-  gprt::store(record.fbPtr, fbOfs, gprt::make_rgba(rnd_color));
+  gprt::store(record.distances, threadID.x, payload.dist);
 }
 
 GPRT_MISS_PROGRAM(miss, (MissProgData, record), (Payload, payload))
 {
-  uint2 pixelID = DispatchRaysIndex().xy;
-  int pattern = (pixelID.x / 8) ^ (pixelID.y/8);
-  payload.color = (pattern & 1) ? record.color1 : record.color0;
+  printf("COWS!!!\n");
 }
 
 struct Attribute
 {
-  double2 bc;
+  double dist;
 };
 
 #define EPSILON 2.2204460492503130808472633361816E-16
@@ -103,8 +99,7 @@ GPRT_COMPUTE_PROGRAM(DPTriangle, (DPTriangleData, record))
 
 GPRT_CLOSEST_HIT_PROGRAM(DPTriangle, (DPTriangleData, record), (Payload, payload), (Attribute, attribute))
 {
-  double2 barycentrics = attribute.bc;
-  payload.color = float3(barycentrics.x, barycentrics.y, 0.0);
+  payload.dist = attribute.dist;
 }
 
 double3 dcross (in double3 a, in double3 b) { return double3(a.y*b.z-a.z*b.y, a.z*b.x-a.x*b.z, a.x*b.y-a.y*b.x); }
@@ -161,13 +156,11 @@ double plucker_edge_test( in double3 vertexa, in double3 vertexb, in double3 ray
 GPRT_INTERSECTION_PROGRAM(DPTrianglePlucker, (DPTriangleData, record))
 {
 
-  uint2 pixelID = DispatchRaysIndex().xy;
-  uint2 dims = DispatchRaysDimensions().xy;
+  uint3 threadID = DispatchRaysIndex();
+  uint3 dims = DispatchRaysDimensions();
   bool debug = false;
-  if ((pixelID.x == dims.x / 2) && (pixelID.y == dims.y / 2)) debug = true;
 
   uint flags = RayFlags();
-
 
   // Just skip if we for some reason cull both...
   if ( ((flags & RAY_FLAG_CULL_BACK_FACING_TRIANGLES) != 0) &&
@@ -190,10 +183,8 @@ GPRT_INTERSECTION_PROGRAM(DPTrianglePlucker, (DPTriangleData, record))
   double3 v1 = gprt::load<double3>(record.vertex, indices.y);
   double3 v2 = gprt::load<double3>(record.vertex, indices.z);
 
-//  uint2 pixelID = DispatchRaysIndex().xy;
-  const int fbOfs = pixelID.x + record.fbSize.x * pixelID.y;
-  double4 raydata1 = gprt::load<double4>(record.dpRays, fbOfs * 2 + 0);
-  double4 raydata2 = gprt::load<double4>(record.dpRays, fbOfs * 2 + 1);
+  double4 raydata1 = gprt::load<double4>(record.dpRays, threadID.x * 2 + 0);
+  double4 raydata2 = gprt::load<double4>(record.dpRays, threadID.x * 2 + 1);
   double3 origin = double3(raydata1.x, raydata1.y, raydata1.z);//ObjectRayOrigin();
   double3 direction = double3(raydata2.x, raydata2.y, raydata2.z);//ObjectRayDirection();
   double tMin = raydata1.w;
@@ -271,10 +262,11 @@ GPRT_INTERSECTION_PROGRAM(DPTrianglePlucker, (DPTriangleData, record))
   if (t < tMin) return;
 
   // update current double precision thit
-  gprt::store<double>(record.dpRays, fbOfs * 8 + 7, t);
+  gprt::store<double>(record.dpRays, threadID.x * 8 + 7, t);
 
   Attribute attr;
-  attr.bc = double2(u, v);
+  attr.dist = t;
+
   float f32t = float(t);
   if (double(f32t) < t) f32t = next_after(f32t);
   ReportHit(f32t, /*hitKind*/ 0, attr);

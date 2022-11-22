@@ -33,29 +33,18 @@ struct DPTriangleData
   alignas(16) gprt::Buffer aabbs;
   /*! array/buffer of double precision rays */
   alignas(16) gprt::Buffer dpRays;
-  alignas(8) int2 fbSize;
 };
 
 struct RayGenData
 {
-  alignas(16) gprt::Buffer fbPtr;
-  alignas(8)  int frameId;
+  alignas(4)  int frameId;
   alignas(16) gprt::Buffer dpRays;
-
-  alignas(8) int2 fbSize;
   alignas(16) gprt::Accel world;
-
-  struct {
-    alignas(16) float3 pos;
-    alignas(16) float3 dir_00;
-    alignas(16) float3 dir_du;
-    alignas(16) float3 dir_dv;
-  } camera;
+  alignas(16) gprt::Buffer distances;
 };
 
 /* variables for the miss program */
 struct MissProgData
 {
-  alignas(16) float3  color0;
-  alignas(16) float3  color1;
+  alignas(4) int temp;
 };
