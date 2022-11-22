@@ -39,13 +39,14 @@ struct DPTriangleData
 struct RayGenData
 {
   alignas(16) gprt::Buffer fbPtr;
+  alignas(8)  int frameId;
   alignas(16) gprt::Buffer dpRays;
 
   alignas(8) int2 fbSize;
   alignas(16) gprt::Accel world;
 
-  struct { 
-    alignas(16) float3 pos;   
+  struct {
+    alignas(16) float3 pos;
     alignas(16) float3 dir_00;
     alignas(16) float3 dir_du;
     alignas(16) float3 dir_dv;

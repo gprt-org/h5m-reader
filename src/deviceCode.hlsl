@@ -22,6 +22,7 @@
 
 #include "deviceCode.h"
 #include "gprt.h"
+#include "rng.h"
 
 struct Payload
 {
@@ -62,7 +63,11 @@ GPRT_RAYGEN_PROGRAM(AABBRayGen, (RayGenData, record))
     payload // the payload IO
   );
 
-  gprt::store(record.fbPtr, fbOfs, gprt::make_rgba(payload.color));
+  uint3 ray_dims = DispatchRaysDimensions();
+  LCGRand my_rng = get_rng(record.frameId, pixelID, ray_dims.xy);
+
+  float3 rnd_color = {lcg_randomf(my_rng), lcg_randomf(my_rng), lcg_randomf(my_rng)};
+  gprt::store(record.fbPtr, fbOfs, gprt::make_rgba(rnd_color));
 }
 
 GPRT_MISS_PROGRAM(miss, (MissProgData, record), (Payload, payload))

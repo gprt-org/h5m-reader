@@ -122,6 +122,7 @@ int main(int argc, char** argv) {
 
   GPRTVarDecl rayGenVars[] = {
     { "fbSize",        GPRT_INT2,   GPRT_OFFSETOF(RayGenData, fbSize)},
+    { "frameId",       GPRT_INT,    GPRT_OFFSETOF(RayGenData, frameId)},
     { "fbPtr",         GPRT_BUFFER, GPRT_OFFSETOF(RayGenData, fbPtr)},
     { "dpRays",        GPRT_BUFFER, GPRT_OFFSETOF(RayGenData, dpRays)},
     { "world",         GPRT_ACCEL,  GPRT_OFFSETOF(RayGenData, world)},
@@ -205,7 +206,7 @@ int main(int argc, char** argv) {
   GPRTBuffer transformBuffer
     = gprtDeviceBufferCreate(context,GPRT_TRANSFORM,1,transform);
   GPRTAccel world = gprtInstanceAccelCreate(context, 1, &aabbAccel);
-  gprtInstanceAccelSetTransforms(world, transformBuffer);
+  gprtInstanceAccelSet3x4Transforms(world, transformBuffer);
   gprtAccelBuild(context, world);
 
   // ----------- set variables  ----------------------------
@@ -262,12 +263,13 @@ int main(int argc, char** argv) {
   // ##################################################################
 
   LOG("launching ...");
-
+  int frameId = 0;
   bool firstFrame = true;
   double xpos = 0.f, ypos = 0.f;
   double lastxpos, lastypos;
   while (!glfwWindowShouldClose(window))
   {
+    frameId++;
     float speed = .001f;
     lastxpos = xpos;
     lastypos = ypos;
@@ -330,6 +332,7 @@ int main(int argc, char** argv) {
       gprtRayGenSet3fv    (rayGen,"camera.dir_00",(float*)&camera_d00);
       gprtRayGenSet3fv    (rayGen,"camera.dir_du",(float*)&camera_ddu);
       gprtRayGenSet3fv    (rayGen,"camera.dir_dv",(float*)&camera_ddv);
+      gprtRayGenSet1i     (rayGen,"frameId", frameId);
       gprtBuildShaderBindingTable(context, GPRT_SBT_RAYGEN);
     }
 
@@ -352,18 +355,19 @@ int main(int argc, char** argv) {
       lookFrom = lookAt + view_vec;
 
       gprtRayGenSet3fv(rayGen, "camera.pos", (float*)&lookFrom);
-      gprtBuildShaderBindingTable(context, GPRT_SBT_RAYGEN);
+      // gprtRayGenSet1i(rayGen,"frameId", frameId);
+      // gprtBuildShaderBindingTable(context, GPRT_SBT_RAYGEN);
 
     }
 
     // Now, trace rays
+    gprtRayGenSet1i(rayGen,"frameId", frameId);
+    gprtBuildShaderBindingTable(context, GPRT_SBT_RAYGEN);
     gprtBeginProfile(context);
     gprtRayGenLaunch2D(context,rayGen,fbSize.x,fbSize.y);
     float ms = gprtEndProfile(context) * 1.e-06;
     std::cout << "RF Time: " << ms << " ms" << std::endl;
     std::cout << "Time per ray: " << ms / (1080 * 720) << " ms" << std::endl;
-
-
 
     // Render results to screen
     void* pixels = gprtBufferGetPointer(frameBuffer);
