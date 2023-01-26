@@ -20,7 +20,7 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
-#include "deviceCode.h"
+#include "sharedCode.h"
 #include "gprt.h"
 
 struct Payload
@@ -81,7 +81,7 @@ struct Attribute
 #define FLT_EPSILON	1.19209290e-7F
 #define DBL_EPSILON	2.2204460492503131e-16
 
-GPRT_COMPUTE_PROGRAM(DPTriangle, (DPTriangleData, record))
+GPRT_COMPUTE_PROGRAM(DPTriangle, (DPTriangleData, record), (1,1,1))
 {
   int primID = DispatchThreadID.x;
   int3 indices = gprt::load<int3>(record.index, primID);

@@ -14,11 +14,7 @@
 
 #include "gprt.h"
 
-#include "deviceCode.h"
-
-// library for windowing
-#define NOMINMAX
-#include <GLFW/glfw3.h>
+#include "sharedCode.h"
 
 #define LOG(message)                                            \
   std::cout << GPRT_TERMINAL_BLUE;                               \
@@ -50,7 +46,6 @@ void render();
 
 // initial image resolution
 const int2 fbSize = {1080,720};
-GLuint fbTexture {0};
 
 int main(int argc, char** argv) {
 
@@ -91,87 +86,53 @@ int main(int argc, char** argv) {
   mbi.reset();
 
   // start up GPRT
+  gprtRequestWindow(fbSize.x, fbSize.y, "S01 Single Triangle");
   GPRTContext context = gprtContextCreate(nullptr, 1);
   GPRTModule module = gprtModuleCreate(context, dbl_deviceCode);
   // -------------------------------------------------------
   // Setup programs and geometry types
   // -------------------------------------------------------
-  GPRTVarDecl DPTriangleVars[] = {
-    { "vertex",  GPRT_BUFFER, GPRT_OFFSETOF(DPTriangleData, vertex)},
-    { "index" ,  GPRT_BUFFER, GPRT_OFFSETOF(DPTriangleData, index)},
-    { "aabbs" ,  GPRT_BUFFER, GPRT_OFFSETOF(DPTriangleData, aabbs)},
-    { "dpRays" , GPRT_BUFFER, GPRT_OFFSETOF(DPTriangleData, dpRays)},
-    { "fbSize",  GPRT_INT2,   GPRT_OFFSETOF(DPTriangleData, fbSize)},
-    { /* sentinel to mark end of list */ }
-  };
-
-    GPRTGeomType DPTriangleType
-    = gprtGeomTypeCreate(context,
-                        GPRT_AABBS,
-                        sizeof(DPTriangleVars),
-                        DPTriangleVars);
-  GPRTCompute DPTriangleBoundsProgram
-    = gprtComputeCreate(context,module,"DPTriangle",
-                        sizeof(DPTriangleVars),
-                        DPTriangleVars);
+  auto DPTriangleType = gprtGeomTypeCreate<DPTriangleData>(context,
+                        GPRT_AABBS);
+  GPRTComputeOf<DPTriangleData> DPTriangleBoundsProgram
+    = gprtComputeCreate<DPTriangleData>(context,module,"DPTriangle");
   gprtGeomTypeSetClosestHitProg(DPTriangleType,0,
-                           module,"DPTriangle");
+                                module,"DPTriangle");
   gprtGeomTypeSetIntersectionProg(DPTriangleType,0,
-                           module,"DPTrianglePlucker");
-
-
-  GPRTVarDecl rayGenVars[] = {
-    { "fbSize",        GPRT_INT2,   GPRT_OFFSETOF(RayGenData, fbSize)},
-    { "fbPtr",         GPRT_BUFFER, GPRT_OFFSETOF(RayGenData, fbPtr)},
-    { "dpRays",        GPRT_BUFFER, GPRT_OFFSETOF(RayGenData, dpRays)},
-    { "world",         GPRT_ACCEL,  GPRT_OFFSETOF(RayGenData, world)},
-    { "camera.pos",    GPRT_FLOAT3, GPRT_OFFSETOF(RayGenData, camera.pos)},
-    { "camera.dir_00", GPRT_FLOAT3, GPRT_OFFSETOF(RayGenData, camera.dir_00)},
-    { "camera.dir_du", GPRT_FLOAT3, GPRT_OFFSETOF(RayGenData, camera.dir_du)},
-    { "camera.dir_dv", GPRT_FLOAT3, GPRT_OFFSETOF(RayGenData, camera.dir_dv)},
-    { /* sentinel to mark end of list */ }
-  };
-  GPRTRayGen rayGen
-    = gprtRayGenCreate(context, module, "AABBRayGen", sizeof(RayGenData), rayGenVars, -1);
-
-
-  GPRTVarDecl missVars[]
-    = {
-    { "color0", GPRT_FLOAT3, GPRT_OFFSETOF(MissProgData,color0)},
-    { "color1", GPRT_FLOAT3, GPRT_OFFSETOF(MissProgData,color1)},
-    { /* sentinel to mark end of list */ }
-  };
-  GPRTMiss miss
-    = gprtMissCreate(context,module,"miss",sizeof(MissProgData),
-                        missVars,-1);
+                                  module,"DPTrianglePlucker");
+  GPRTRayGenOf<RayGenData> rayGen
+    = gprtRayGenCreate<RayGenData>(context, module, "AABBRayGen");
+  GPRTMissOf<MissProgData> miss
+    = gprtMissCreate<MissProgData>(context,module,"miss");
 
   gprtBuildPipeline(context);
 
   // ------------------------------------------------------------------
   // aabb mesh
   // ------------------------------------------------------------------
-  GPRTBuffer vertexBuffer
-    = gprtDeviceBufferCreate(context, GPRT_DOUBLE3, n_vertices, mdam.xyz().data());
-  GPRTBuffer indexBuffer
-    = gprtDeviceBufferCreate(context, GPRT_INT3, n_tris, mdam.conn().data());
-  GPRTBuffer aabbPositionsBuffer
-    = gprtDeviceBufferCreate(context, GPRT_FLOAT3, 2*n_tris, nullptr);
+  auto vertexBuffer
+    = gprtDeviceBufferCreate<double3>(context, n_vertices, mdam.xyz().data());
+  auto indexBuffer
+    = gprtDeviceBufferCreate<int3>(context, n_tris, mdam.conn().data());
+  auto aabbPositionsBuffer
+    = gprtDeviceBufferCreate<float3>(context, 2*n_tris, nullptr);
 
   // clear out mdam data now that it's been transferred to device
   mdam.clear();
 
-  GPRTGeom dpCubeGeom
-    = gprtGeomCreate(context, DPTriangleType);
+  auto dpCubeGeom = gprtGeomCreate<DPTriangleData>(context, DPTriangleType);
   gprtAABBsSetPositions(dpCubeGeom, aabbPositionsBuffer,
                         n_tris, 2 * sizeof(float3), 0);
 
-  gprtGeomSetBuffer(dpCubeGeom, "vertex", vertexBuffer);
-  gprtGeomSetBuffer(dpCubeGeom, "index", indexBuffer);
-  gprtGeomSetBuffer(dpCubeGeom, "aabbs", aabbPositionsBuffer);
-
-  gprtComputeSetBuffer(DPTriangleBoundsProgram, "vertex", vertexBuffer);
-  gprtComputeSetBuffer(DPTriangleBoundsProgram, "index", indexBuffer);
-  gprtComputeSetBuffer(DPTriangleBoundsProgram, "aabbs", aabbPositionsBuffer);
+  auto dpCubeGeomData = gprtGeomGetPointer(dpCubeGeom);
+  dpCubeGeomData->vertex = gprtBufferGetHandle(vertexBuffer);
+  dpCubeGeomData->index = gprtBufferGetHandle(indexBuffer);
+  dpCubeGeomData->aabbs = gprtBufferGetHandle(aabbPositionsBuffer);
+  
+  auto boundsProgData = gprtComputeGetPointer(DPTriangleBoundsProgram);
+  boundsProgData->vertex = gprtBufferGetHandle(vertexBuffer);
+  boundsProgData->index = gprtBufferGetHandle(indexBuffer);
+  boundsProgData->aabbs = gprtBufferGetHandle(aabbPositionsBuffer);
 
   // compute AABBs in parallel with a compute shader
   gprtBuildShaderBindingTable(context, GPRT_SBT_COMPUTE);
@@ -203,59 +164,39 @@ int main(int argc, char** argv) {
   // the group/accel for that mesh
   // ------------------------------------------------------------------
   GPRTBuffer transformBuffer
-    = gprtDeviceBufferCreate(context,GPRT_TRANSFORM,1,transform);
+    = gprtDeviceBufferCreate(context,sizeof(float3x4),1,transform);
   GPRTAccel world = gprtInstanceAccelCreate(context, 1, &aabbAccel);
-  gprtInstanceAccelSetTransforms(world, transformBuffer);
+  gprtInstanceAccelSet3x4Transforms(world, transformBuffer);
   gprtAccelBuild(context, world);
 
   // ----------- set variables  ----------------------------
-  gprtMissSet3f(miss,"color0",0.1f,0.1f,0.1f);
-  gprtMissSet3f(miss,"color1",.0f,.0f,.0f);
-
+  auto missData = gprtMissGetPointer(miss);
+  missData->color0 = float3(0.1f, 0.1f, 0.1f);
+  missData->color1 = float3(0.f, 0.f, 0.f);
+  
   // ----------- set raygen variables  ----------------------------
-  GPRTBuffer frameBuffer
-    = gprtHostBufferCreate(context, GPRT_INT, fbSize.x*fbSize.y);
+  auto frameBuffer = gprtDeviceBufferCreate<uint32_t>(context, fbSize.x*fbSize.y);
 
   // need this to communicate double precision rays to intersection program
   // ray origin xyz + tmin, then ray direction xyz + tmax
-  GPRTBuffer doubleRayBuffer
-    = gprtDeviceBufferCreate(context,GPRT_DOUBLE,fbSize.x*fbSize.y*8);
-  gprtRayGenSetBuffer(rayGen, "fbPtr", frameBuffer);
-  gprtRayGenSetBuffer(rayGen, "dpRays", doubleRayBuffer);
-  gprtRayGenSet2iv(rayGen, "fbSize", (int32_t*)&fbSize);
-  gprtRayGenSetAccel(rayGen, "world", world);
+  auto doubleRayBuffer = gprtDeviceBufferCreate<double>(context,fbSize.x*fbSize.y*8);
+
+  auto rayGenData = gprtRayGenGetPointer(rayGen);
+  rayGenData->fbPtr = gprtBufferGetHandle(frameBuffer);
+  rayGenData->dpRays = gprtBufferGetHandle(doubleRayBuffer);
+  rayGenData->fbSize = fbSize;
+  rayGenData->world = gprtAccelGetHandle(world);
 
   // Also set on geometry for intersection program
-  gprtGeomSetBuffer(dpCubeGeom,"dpRays", doubleRayBuffer);
-  gprtGeomSet2iv(dpCubeGeom,"fbSize", (int32_t*)&fbSize);
-
+  dpCubeGeomData->fbSize = fbSize;
+  dpCubeGeomData->dpRays = gprtBufferGetHandle(doubleRayBuffer);  
+  
   // ##################################################################
   // build *SBT* required to trace the groups
   // ##################################################################
 
   gprtBuildPipeline(context);
   gprtBuildShaderBindingTable(context, GPRT_SBT_ALL);
-
-  // ##################################################################
-  // create a window we can use to display and interact with the image
-  // ##################################################################
-  if (!glfwInit())
-    // Initialization failed
-    throw std::runtime_error("Can't initialize GLFW");
-
-  auto error_callback = [](int error, const char* description)
-  {
-    fprintf(stderr, "Error: %s\n", description);
-  };
-  glfwSetErrorCallback(error_callback);
-
-  glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 2);
-  glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 0);
-  glfwWindowHint(GLFW_RESIZABLE, GLFW_FALSE);
-  GLFWwindow* window = glfwCreateWindow(fbSize.x, fbSize.y,
-    "Int02 Simple AABBs", NULL, NULL);
-  if (!window) throw std::runtime_error("Window or OpenGL context creation failed");
-  glfwMakeContextCurrent(window);
 
   // ##################################################################
   // now that everything is ready: launch it ....
@@ -266,22 +207,22 @@ int main(int argc, char** argv) {
   bool firstFrame = true;
   double xpos = 0.f, ypos = 0.f;
   double lastxpos, lastypos;
-  while (!glfwWindowShouldClose(window))
+  while (!gprtWindowShouldClose(context))
   {
     float speed = .001f;
     lastxpos = xpos;
     lastypos = ypos;
-    glfwGetCursorPos(window, &xpos, &ypos);
+    gprtGetCursorPos(context, &xpos, &ypos);
     if (firstFrame) {
       lastxpos = xpos;
       lastypos = ypos;
     }
-    int state = glfwGetMouseButton(window, GLFW_MOUSE_BUTTON_LEFT);
-    int rstate = glfwGetMouseButton(window, GLFW_MOUSE_BUTTON_RIGHT);
+    int state = gprtGetMouseButton(context, GPRT_MOUSE_BUTTON_LEFT);
+    int rstate = gprtGetMouseButton(context, GPRT_MOUSE_BUTTON_RIGHT);
 
-    int w_state = glfwGetKey(window, GLFW_KEY_W);
-    int c_state = glfwGetKey(window, GLFW_KEY_C);
-    int ctrl_state = glfwGetKey(window, GLFW_KEY_LEFT_CONTROL);
+    int w_state = gprtGetKey(context, GLFW_KEY_W);
+    int c_state = gprtGetKey(context, GLFW_KEY_C);
+    int ctrl_state = gprtGetKey(context, GLFW_KEY_LEFT_CONTROL);
 
     // close window on Ctrl-W press
     if (w_state && ctrl_state) { break; }
@@ -289,7 +230,7 @@ int main(int argc, char** argv) {
     if (c_state && ctrl_state) { break; }
 
     // If we click the mouse, we should rotate the camera
-    if (state == GLFW_PRESS || firstFrame)
+    if (state == GPRT_PRESS || firstFrame)
     {
       firstFrame = false;
       float4 position = {lookFrom.x, lookFrom.y, lookFrom.z, 1.f};
@@ -326,15 +267,15 @@ int main(int argc, char** argv) {
       camera_d00 -= 0.5f * camera_ddv;
 
       // ----------- set variables  ----------------------------
-      gprtRayGenSet3fv    (rayGen,"camera.pos",   (float*)&camera_pos);
-      gprtRayGenSet3fv    (rayGen,"camera.dir_00",(float*)&camera_d00);
-      gprtRayGenSet3fv    (rayGen,"camera.dir_du",(float*)&camera_ddu);
-      gprtRayGenSet3fv    (rayGen,"camera.dir_dv",(float*)&camera_ddv);
+      rayGenData->camera.pos = camera_pos;
+      rayGenData->camera.dir_00 = camera_d00;
+      rayGenData->camera.dir_du = camera_ddu;
+      rayGenData->camera.dir_dv = camera_ddv;
       gprtBuildShaderBindingTable(context, GPRT_SBT_RAYGEN);
     }
 
-    if (rstate == GLFW_PRESS) {
-      glfwGetCursorPos(window, &xpos, &ypos);
+    if (rstate == GPRT_PRESS) {
+      gprtGetCursorPos(context, &xpos, &ypos);
       float dy = ypos - lastypos;
 
       float3 view_vec = lookFrom - lookAt;
@@ -351,9 +292,8 @@ int main(int argc, char** argv) {
 
       lookFrom = lookAt + view_vec;
 
-      gprtRayGenSet3fv(rayGen, "camera.pos", (float*)&lookFrom);
+      rayGenData->camera.pos = lookFrom;
       gprtBuildShaderBindingTable(context, GPRT_SBT_RAYGEN);
-
     }
 
     // Now, trace rays
@@ -363,56 +303,8 @@ int main(int argc, char** argv) {
     std::cout << "RF Time: " << ms << " ms" << std::endl;
     std::cout << "Time per ray: " << ms / (1080 * 720) << " ms" << std::endl;
 
-
-
     // Render results to screen
-    void* pixels = gprtBufferGetPointer(frameBuffer);
-    if (fbTexture == 0)
-      glGenTextures(1, &fbTexture);
-
-    glBindTexture(GL_TEXTURE_2D, fbTexture);
-    GLenum texFormat = GL_RGBA;
-    GLenum texelType = GL_UNSIGNED_BYTE;
-    glTexImage2D(GL_TEXTURE_2D, 0, texFormat, fbSize.x, fbSize.y, 0, GL_RGBA,
-                  texelType, pixels);
-
-    glDisable(GL_LIGHTING);
-    glColor3f(1, 1, 1);
-
-    glMatrixMode(GL_MODELVIEW);
-    glLoadIdentity();
-
-    glEnable(GL_TEXTURE_2D);
-    glBindTexture(GL_TEXTURE_2D, fbTexture);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-
-    glDisable(GL_DEPTH_TEST);
-
-    glViewport(0, 0, fbSize.x, fbSize.y);
-
-    glMatrixMode(GL_PROJECTION);
-    glLoadIdentity();
-    glOrtho(0.f, (float)fbSize.x, (float)fbSize.y, 0.f, -1.f, 1.f);
-
-    glBegin(GL_QUADS);
-    {
-      glTexCoord2f(0.f, 0.f);
-      glVertex3f(0.f, 0.f, 0.f);
-
-      glTexCoord2f(0.f, 1.f);
-      glVertex3f(0.f, (float)fbSize.y, 0.f);
-
-      glTexCoord2f(1.f, 1.f);
-      glVertex3f((float)fbSize.x, (float)fbSize.y, 0.f);
-
-      glTexCoord2f(1.f, 0.f);
-      glVertex3f((float)fbSize.x, 0.f, 0.f);
-    }
-    glEnd();
-
-    glfwSwapBuffers(window);
-    glfwPollEvents();
+    gprtBufferPresent(context, frameBuffer);
   }
 
   // ##################################################################
@@ -420,9 +312,6 @@ int main(int argc, char** argv) {
   // ##################################################################
 
   LOG("cleaning up ...");
-
-  glfwDestroyWindow(window);
-  glfwTerminate();
 
   gprtBufferDestroy(vertexBuffer);
   gprtBufferDestroy(indexBuffer);
