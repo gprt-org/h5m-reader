@@ -28,7 +28,7 @@ struct Payload
 [[vk::location(0)]] float3 color;
 };
 
-GPRT_RAYGEN_PROGRAM(AABBRayGen, (RayGenData, record))
+GPRT_RAYGEN_PROGRAM(DPRayGen, (RayGenData, record))
 {
   Payload payload;
   uint2 pixelID = DispatchRaysIndex().xy;
@@ -62,7 +62,41 @@ GPRT_RAYGEN_PROGRAM(AABBRayGen, (RayGenData, record))
     payload // the payload IO
   );
 
-  gprt::store(record.fbPtr, fbOfs, gprt::make_rgba(payload.color));
+  gprt::store(record.fbPtr, fbOfs, gprt::make_bgra(payload.color));
+}
+
+GPRT_RAYGEN_PROGRAM(SPRayGen, (RayGenData, record))
+{
+  Payload payload;
+  uint2 pixelID = DispatchRaysIndex().xy;
+  float2 screen = (float2(pixelID) +
+                  float2(.5f, .5f)) / float2(record.fbSize);
+  const int fbOfs = pixelID.x + record.fbSize.x * pixelID.y;
+
+  RayDesc rayDesc;
+  rayDesc.Origin = record.camera.pos;
+  rayDesc.Direction =
+    normalize(record.camera.dir_00
+    + screen.x * record.camera.dir_du
+    + screen.y * record.camera.dir_dv
+  );
+  rayDesc.TMin = 0.0;
+  rayDesc.TMax = 10000.0;
+
+  RaytracingAccelerationStructure world = gprt::getAccelHandle(record.world);
+
+  TraceRay(
+    world, // the tree
+    RAY_FLAG_NONE, // ray flags
+    0xff, // instance inclusion mask
+    0, // ray type
+    1, // number of ray types
+    0, // miss type
+    rayDesc, // the ray to trace
+    payload // the payload IO
+  );
+
+  gprt::store(record.fbPtr, fbOfs, gprt::make_bgra(payload.color));
 }
 
 GPRT_MISS_PROGRAM(miss, (MissProgData, record), (Payload, payload))
@@ -72,7 +106,7 @@ GPRT_MISS_PROGRAM(miss, (MissProgData, record), (Payload, payload))
   payload.color = (pattern & 1) ? record.color1 : record.color0;
 }
 
-struct Attribute
+struct DPAttribute
 {
   double2 bc;
 };
@@ -96,7 +130,7 @@ GPRT_COMPUTE_PROGRAM(DPTriangle, (DPTriangleData, record), (1,1,1))
   gprt::store(record.aabbs, 2 * primID + 1, fpaabbmax);
 }
 
-GPRT_CLOSEST_HIT_PROGRAM(DPTriangle, (DPTriangleData, record), (Payload, payload), (Attribute, attribute))
+GPRT_CLOSEST_HIT_PROGRAM(DPTriangle, (DPTriangleData, record), (Payload, payload), (DPAttribute, attribute))
 {
   double2 barycentrics = attribute.bc;
   payload.color = float3(barycentrics.x, barycentrics.y, 0.0);
@@ -268,9 +302,20 @@ GPRT_INTERSECTION_PROGRAM(DPTrianglePlucker, (DPTriangleData, record))
   // update current double precision thit
   gprt::store<double>(record.dpRays, fbOfs * 8 + 7, t);
 
-  Attribute attr;
+  DPAttribute attr;
   attr.bc = double2(u, v);
   float f32t = float(t);
   if (double(f32t) < t) f32t = next_after(f32t);
   ReportHit(f32t, /*hitKind*/ 0, attr);
+}
+
+
+struct SPAttribute
+{
+  float2 bc;
+};
+GPRT_CLOSEST_HIT_PROGRAM(SPTriangle, (SPTriangleData, record), (Payload, payload), (SPAttribute, attribute))
+{
+  float2 barycentrics = attribute.bc;
+  payload.color = float3(barycentrics.x, barycentrics.y, 0.0);
 }

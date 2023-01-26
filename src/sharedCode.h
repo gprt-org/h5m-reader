@@ -36,6 +36,14 @@ struct DPTriangleData
   alignas(8) int2 fbSize;
 };
 
+struct SPTriangleData
+{
+  /*! array/buffer of vertex indices */
+  alignas(16) gprt::Buffer index; // vec3f*
+  /*! array/buffer of vertex positions */
+  alignas(16) gprt::Buffer vertex; // float *
+};
+
 struct RayGenData
 {
   alignas(16) gprt::Buffer fbPtr;

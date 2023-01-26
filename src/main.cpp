@@ -34,14 +34,6 @@ extern GPRTProgram dbl_deviceCode;
 extern uint32_t double_indices[];
 extern double double_vertices[];
 
-float transform[3][4] =
-  {
-    1.0f, 0.0f, 0.0f, 0.0f,
-    0.0f, 1.0f, 0.0f, 0.0f,
-    0.0f, 0.0f, 1.0f, 0.0f
-  };
-
-
 void render();
 
 // initial image resolution
@@ -52,17 +44,21 @@ int main(int argc, char** argv) {
   argparse::ArgumentParser args("GPRT H5M READER");
 
   args.add_argument("filename");
+  args.add_argument("type");
 
   try {
-  args.parse_args(argc, argv);                  // Example: ./main -abc 1.95 2.47
+    args.parse_args(argc, argv);                  // Example: ./main -abc 1.95 2.47
   }
   catch (const std::runtime_error& err) {
-  std::cout << err.what() << std::endl;
-  std::cout << args;
-  exit(0);
+    std::cout << err.what() << std::endl;
+    std::cout << args;
+    exit(0);
   }
 
   auto filename = args.get<std::string>("filename");
+
+  auto type = args.get<std::string>("type");
+  bool useFloats = (type == "float");
 
   std::shared_ptr<moab::Core> mbi = std::make_shared<moab::Core>();
   moab::ErrorCode rval;
@@ -92,6 +88,8 @@ int main(int argc, char** argv) {
   // -------------------------------------------------------
   // Setup programs and geometry types
   // -------------------------------------------------------
+
+  // For double precision triangles
   auto DPTriangleType = gprtGeomTypeCreate<DPTriangleData>(context,
                         GPRT_AABBS);
   GPRTComputeOf<DPTriangleData> DPTriangleBoundsProgram
@@ -100,8 +98,20 @@ int main(int argc, char** argv) {
                                 module,"DPTriangle");
   gprtGeomTypeSetIntersectionProg(DPTriangleType,0,
                                   module,"DPTrianglePlucker");
-  GPRTRayGenOf<RayGenData> rayGen
-    = gprtRayGenCreate<RayGenData>(context, module, "AABBRayGen");
+  
+  // For single precision triangles
+  auto SPTriangleType = gprtGeomTypeCreate<SPTriangleData>(context, GPRT_TRIANGLES);
+  gprtGeomTypeSetClosestHitProg(SPTriangleType,0, module,"SPTriangle");
+  
+  // For launching double precision rays
+  GPRTRayGenOf<RayGenData> DPRayGen = nullptr;
+  if (!useFloats) DPRayGen = gprtRayGenCreate<RayGenData>(context, module, "DPRayGen");
+  
+  // For launching single precision rays
+  GPRTRayGenOf<RayGenData> SPRayGen = nullptr;
+  if (useFloats) SPRayGen = gprtRayGenCreate<RayGenData>(context, module, "SPRayGen");
+
+  // What to do if a ray misses
   GPRTMissOf<MissProgData> miss
     = gprtMissCreate<MissProgData>(context,module,"miss");
 
@@ -110,36 +120,65 @@ int main(int argc, char** argv) {
   // ------------------------------------------------------------------
   // aabb mesh
   // ------------------------------------------------------------------
-  auto vertexBuffer
-    = gprtDeviceBufferCreate<double3>(context, n_vertices, mdam.xyz().data());
   auto indexBuffer
     = gprtDeviceBufferCreate<int3>(context, n_tris, mdam.conn().data());
-  auto aabbPositionsBuffer
-    = gprtDeviceBufferCreate<float3>(context, 2*n_tris, nullptr);
 
-  // clear out mdam data now that it's been transferred to device
-  mdam.clear();
+  GPRTBufferOf<float3> singleVertexBuffer = nullptr;
 
-  auto dpCubeGeom = gprtGeomCreate<DPTriangleData>(context, DPTriangleType);
-  gprtAABBsSetPositions(dpCubeGeom, aabbPositionsBuffer,
-                        n_tris, 2 * sizeof(float3), 0);
+  // for double precision triangles, we'll also need AABBs
+  GPRTBufferOf<double3> doubleVertexBuffer = nullptr;
+  GPRTBufferOf<float3> aabbPositionsBuffer = nullptr;
 
-  auto dpCubeGeomData = gprtGeomGetPointer(dpCubeGeom);
-  dpCubeGeomData->vertex = gprtBufferGetHandle(vertexBuffer);
-  dpCubeGeomData->index = gprtBufferGetHandle(indexBuffer);
-  dpCubeGeomData->aabbs = gprtBufferGetHandle(aabbPositionsBuffer);
-  
-  auto boundsProgData = gprtComputeGetPointer(DPTriangleBoundsProgram);
-  boundsProgData->vertex = gprtBufferGetHandle(vertexBuffer);
-  boundsProgData->index = gprtBufferGetHandle(indexBuffer);
-  boundsProgData->aabbs = gprtBufferGetHandle(aabbPositionsBuffer);
+  if (useFloats) {
+    std::vector<float> floatVertData(n_vertices*3); 
+    for (uint32_t i = 0; i < n_vertices * 3; ++i) {
+      // casting down to float here
+      floatVertData[i] = mdam.xyz()[i];
+    }
+    singleVertexBuffer = gprtDeviceBufferCreate<float3>(context, n_vertices, floatVertData.data());
+  } else {
+    doubleVertexBuffer = gprtDeviceBufferCreate<double3>(context, n_vertices, mdam.xyz().data());
+    aabbPositionsBuffer = gprtDeviceBufferCreate<float3>(context, 2*n_tris, nullptr);
+  }
 
-  // compute AABBs in parallel with a compute shader
-  gprtBuildShaderBindingTable(context, GPRT_SBT_COMPUTE);
-  gprtComputeLaunch1D(context, DPTriangleBoundsProgram, n_tris);
+  GPRTGeomOf<DPTriangleData> dpGeom = nullptr;
+  GPRTGeomOf<SPTriangleData> spGeom = nullptr;
 
-  GPRTAccel aabbAccel = gprtAABBAccelCreate(context, 1, &dpCubeGeom);
-  gprtAccelBuild(context, aabbAccel);
+  GPRTAccel blas;
+
+  if (useFloats) {
+    spGeom = gprtGeomCreate<SPTriangleData>(context, SPTriangleType);
+    gprtTrianglesSetIndices(spGeom, indexBuffer, n_tris);
+    gprtTrianglesSetVertices(spGeom, singleVertexBuffer, n_vertices);
+
+    auto spGeomData = gprtGeomGetPointer(spGeom);
+    spGeomData->vertex = gprtBufferGetHandle(singleVertexBuffer);
+    spGeomData->index = gprtBufferGetHandle(indexBuffer);
+    blas = gprtTrianglesAccelCreate(context, 1, &spGeom);
+    gprtAccelBuild(context, blas);
+  }
+  else {
+    dpGeom = gprtGeomCreate<DPTriangleData>(context, DPTriangleType);
+    gprtAABBsSetPositions(dpGeom, aabbPositionsBuffer,
+                          n_tris, 2 * sizeof(float3), 0);
+
+    auto dpGeomData = gprtGeomGetPointer(dpGeom);
+    dpGeomData->vertex = gprtBufferGetHandle(doubleVertexBuffer);
+    dpGeomData->index = gprtBufferGetHandle(indexBuffer);
+    dpGeomData->aabbs = gprtBufferGetHandle(aabbPositionsBuffer);
+    
+    auto boundsProgData = gprtComputeGetPointer(DPTriangleBoundsProgram);
+    boundsProgData->vertex = gprtBufferGetHandle(doubleVertexBuffer);
+    boundsProgData->index = gprtBufferGetHandle(indexBuffer);
+    boundsProgData->aabbs = gprtBufferGetHandle(aabbPositionsBuffer);
+
+    // compute AABBs in parallel with a compute shader
+    gprtBuildShaderBindingTable(context, GPRT_SBT_COMPUTE);
+    gprtComputeLaunch1D(context, DPTriangleBoundsProgram, n_tris);
+
+    blas = gprtAABBAccelCreate(context, 1, &dpGeom);
+    gprtAccelBuild(context, blas);
+  }
 
   // compute centroid to look at
   const auto& xyz = mdam.xyz();
@@ -160,13 +199,13 @@ int main(int argc, char** argv) {
   float3 lookUp = {0.f,0.f,-1.f};
   float cosFovy = 0.66f;
 
+  // clear out mdam data now that it's been transferred to device
+  mdam.clear();
+
   // ------------------------------------------------------------------
   // the group/accel for that mesh
   // ------------------------------------------------------------------
-  GPRTBuffer transformBuffer
-    = gprtDeviceBufferCreate(context,sizeof(float3x4),1,transform);
-  GPRTAccel world = gprtInstanceAccelCreate(context, 1, &aabbAccel);
-  gprtInstanceAccelSet3x4Transforms(world, transformBuffer);
+  GPRTAccel world = gprtInstanceAccelCreate(context, 1, &blas);
   gprtAccelBuild(context, world);
 
   // ----------- set variables  ----------------------------
@@ -179,17 +218,24 @@ int main(int argc, char** argv) {
 
   // need this to communicate double precision rays to intersection program
   // ray origin xyz + tmin, then ray direction xyz + tmax
-  auto doubleRayBuffer = gprtDeviceBufferCreate<double>(context,fbSize.x*fbSize.y*8);
-
-  auto rayGenData = gprtRayGenGetPointer(rayGen);
+  GPRTBufferOf<double> doubleRayBuffer = nullptr;
+  RayGenData* rayGenData;
+  if (useFloats) {
+    rayGenData = gprtRayGenGetPointer(SPRayGen);
+  }
+  else {
+    rayGenData = gprtRayGenGetPointer(DPRayGen);
+    doubleRayBuffer = gprtDeviceBufferCreate<double>(context,fbSize.x*fbSize.y*8);
+    rayGenData->dpRays = gprtBufferGetHandle(doubleRayBuffer);
+  
+    // Also set on geometry for intersection program
+    auto dpGeomData = gprtGeomGetPointer(dpGeom);
+    dpGeomData->fbSize = fbSize;
+    dpGeomData->dpRays = gprtBufferGetHandle(doubleRayBuffer);  
+  }
   rayGenData->fbPtr = gprtBufferGetHandle(frameBuffer);
-  rayGenData->dpRays = gprtBufferGetHandle(doubleRayBuffer);
   rayGenData->fbSize = fbSize;
-  rayGenData->world = gprtAccelGetHandle(world);
-
-  // Also set on geometry for intersection program
-  dpCubeGeomData->fbSize = fbSize;
-  dpCubeGeomData->dpRays = gprtBufferGetHandle(doubleRayBuffer);  
+  rayGenData->world = gprtAccelGetHandle(world);    
   
   // ##################################################################
   // build *SBT* required to trace the groups
@@ -284,7 +330,7 @@ int main(int argc, char** argv) {
         view_vec.x *= 0.95;
         view_vec.y *= 0.95;
         view_vec.z *= 0.95;
-      } else {
+      } else if (dy < 0.0) {
         view_vec.x *= 1.05;
         view_vec.y *= 1.05;
         view_vec.z *= 1.05;
@@ -298,7 +344,13 @@ int main(int argc, char** argv) {
 
     // Now, trace rays
     gprtBeginProfile(context);
-    gprtRayGenLaunch2D(context,rayGen,fbSize.x,fbSize.y);
+
+    if (useFloats) {
+      gprtRayGenLaunch2D(context,SPRayGen,fbSize.x,fbSize.y);
+    }
+    else  {
+      gprtRayGenLaunch2D(context,DPRayGen,fbSize.x,fbSize.y);
+    }
     float ms = gprtEndProfile(context) * 1.e-06;
     std::cout << "RF Time: " << ms << " ms" << std::endl;
     std::cout << "Time per ray: " << ms / (1080 * 720) << " ms" << std::endl;
@@ -313,19 +365,22 @@ int main(int argc, char** argv) {
 
   LOG("cleaning up ...");
 
-  gprtBufferDestroy(vertexBuffer);
+  if (singleVertexBuffer) gprtBufferDestroy(singleVertexBuffer);
+  if (doubleVertexBuffer) gprtBufferDestroy(doubleVertexBuffer);
   gprtBufferDestroy(indexBuffer);
-  gprtBufferDestroy(aabbPositionsBuffer);
+  if (aabbPositionsBuffer) gprtBufferDestroy(aabbPositionsBuffer);
   gprtBufferDestroy(frameBuffer);
-  gprtBufferDestroy(doubleRayBuffer);
-  gprtBufferDestroy(transformBuffer);
-  gprtRayGenDestroy(rayGen);
+  if (doubleRayBuffer) gprtBufferDestroy(doubleRayBuffer);
+  if (SPRayGen) gprtRayGenDestroy(SPRayGen);
+  if (DPRayGen) gprtRayGenDestroy(DPRayGen);
   gprtMissDestroy(miss);
   gprtComputeDestroy(DPTriangleBoundsProgram);
-  gprtAccelDestroy(aabbAccel);
+  gprtAccelDestroy(blas);
   gprtAccelDestroy(world);
-  gprtGeomDestroy(dpCubeGeom);
+  if (dpGeom) gprtGeomDestroy(dpGeom);
+  if (spGeom) gprtGeomDestroy(spGeom);
   gprtGeomTypeDestroy(DPTriangleType);
+  gprtGeomTypeDestroy(SPTriangleType);
   gprtModuleDestroy(module);
   gprtContextDestroy(context);
 
