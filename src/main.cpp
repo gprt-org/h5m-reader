@@ -220,9 +220,9 @@ int main(int argc, char** argv) {
     int state = gprtGetMouseButton(context, GPRT_MOUSE_BUTTON_LEFT);
     int rstate = gprtGetMouseButton(context, GPRT_MOUSE_BUTTON_RIGHT);
 
-    int w_state = gprtGetKey(context, GLFW_KEY_W);
-    int c_state = gprtGetKey(context, GLFW_KEY_C);
-    int ctrl_state = gprtGetKey(context, GLFW_KEY_LEFT_CONTROL);
+    int w_state = gprtGetKey(context, GPRT_KEY_W);
+    int c_state = gprtGetKey(context, GPRT_KEY_C);
+    int ctrl_state = gprtGetKey(context, GPRT_KEY_LEFT_CONTROL);
 
     // close window on Ctrl-W press
     if (w_state && ctrl_state) { break; }
