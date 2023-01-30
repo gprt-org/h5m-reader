@@ -40,7 +40,7 @@ GPRT_RAYGEN_PROGRAM(AABBRayGen, (RayGenData, record))
   LCGRand my_rng = get_rng(record.frameId, threadID.xy, ray_dims.xy);
 
   RayDesc rayDesc;
-  rayDesc.Origin = float3(0.0, 0.0, 0.0);
+  rayDesc.Origin = float3(0.0, 0.0, 3.0);
   // generate a random ray direction
   rayDesc.Direction = float3(lcg_randomf(my_rng), lcg_randomf(my_rng), lcg_randomf(my_rng));
   rayDesc.Direction *= 2.0;
@@ -70,7 +70,7 @@ GPRT_RAYGEN_PROGRAM(AABBRayGen, (RayGenData, record))
 
 GPRT_MISS_PROGRAM(miss, (MissProgData, record), (Payload, payload))
 {
-  printf("COWS!!!\n");
+  // printf("COWS!!!\n");
 }
 
 struct Attribute

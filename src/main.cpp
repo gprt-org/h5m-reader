@@ -122,7 +122,7 @@ int main(int argc, char** argv) {
     = gprtRayGenCreate(context, module, "AABBRayGen", sizeof(RayGenData), rayGenVars, -1);
 
   GPRTBuffer distances =
-    gprtHostBufferCreate(context, GPRT_DOUBLE, num_rays);
+    gprtDeviceBufferCreate(context, GPRT_DOUBLE, num_rays);
 
   gprtRayGenSetBuffer(rayGen, "distances", distances);
 
@@ -230,6 +230,16 @@ int main(int argc, char** argv) {
     avg_time += t;
     std::cout << "RF Time: " << ms << " ms" << std::endl;
     std::cout << "Time per ray: " << ms / num_rays << " ms" << std::endl;
+
+    // gprtBufferMap(distances);
+    // double *dptr = (double*)gprtBufferGetPointer(distances);
+    // for (int j = 0; j < num_rays; ++j) {
+    //   if (fabs(dptr[j] - 10.0) > 1e-03) {
+    //     std::cout << "ANGRY COWS" << std::endl;
+    //     std::cout << fabs(dptr[j] - 10.0) << std::endl;
+    //     return 1;
+    //   }
+    // }
   }
 
   float ms_per_ray = avg_time * 1.e-06 / (num_rays * n_launches);
@@ -238,10 +248,8 @@ int main(int argc, char** argv) {
   std::cout <<  "======================================" << std::endl;
 
   std::cout <<  "======================================" << std::endl;
-  std::cout << "Gigarays: " << 1 / (ms_per_ray / 1e3) / 1e9 << std::endl;
+  std::cout << "Rays / s: " << 1 / (ms_per_ray / 1e3) << std::endl;
   std::cout <<  "======================================" << std::endl;
-
-
 
   gprtBufferDestroy(vertexBuffer);
   gprtBufferDestroy(indexBuffer);
