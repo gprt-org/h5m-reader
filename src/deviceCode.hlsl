@@ -318,6 +318,11 @@ struct SPAttribute
 GPRT_CLOSEST_HIT_PROGRAM(SPTriangle, (SPTriangleData, record), (Payload, payload), (SPAttribute, attribute))
 {
   float2 barycentrics = attribute.bc;
-  // payload.color = float3(barycentrics.x, barycentrics.y, 0.0);
-  payload.color = record.color_fwd;
+
+  uint hit_kind = HitKind();
+
+  if (hit_kind == HIT_KIND_TRIANGLE_FRONT_FACE)
+    payload.color = record.color_fwd;
+  else
+    payload.color = record.color_bwd;
 }
