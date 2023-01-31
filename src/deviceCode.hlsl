@@ -310,13 +310,14 @@ GPRT_INTERSECTION_PROGRAM(DPTrianglePlucker, (DPTriangleData, record))
   ReportHit(f32t, /*hitKind*/ 0, attr);
 }
 
-
 struct SPAttribute
 {
   float2 bc;
 };
+
 GPRT_CLOSEST_HIT_PROGRAM(SPTriangle, (SPTriangleData, record), (Payload, payload), (SPAttribute, attribute))
 {
   float2 barycentrics = attribute.bc;
-  payload.color = float3(barycentrics.x, barycentrics.y, 0.0);
+  // payload.color = float3(barycentrics.x, barycentrics.y, 0.0);
+  payload.color = record.color_fwd;
 }

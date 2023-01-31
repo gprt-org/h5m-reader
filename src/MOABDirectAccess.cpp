@@ -87,6 +87,7 @@ MBDirectAccess::setup(std::vector<int> vol_ids) {
 
     // offset is always relative to first global triangle
     int offset = tris_it - tris.begin();
+    offsets_.push_back({offset, n_elements});
     for (int i = 0; i < 3*n_elements; i++) conn_[3*offset + i] = conntmp[i] - all_tris.front();
 
     // move iterator forward by the number of triangles in this contiguous memory block

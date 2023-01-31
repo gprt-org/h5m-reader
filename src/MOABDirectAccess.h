@@ -75,12 +75,13 @@ public:
   inline std::vector<int>& conn() { return conn_; }
   inline const std::vector<int>& conn() const { return conn_; }
 
-private:
+public:
   Interface* mbi {nullptr}; //!< MOAB instance for the managed data
   int num_elements_ {-1}; //!< Number of elements in the manager
   int num_vertices_ {-1}; //!< Number of vertices in the manager
   int element_stride_ {-1}; //!< Number of vertices used by each element
   std::vector<std::pair<EntityHandle, size_t>> first_elements_; //!< Pairs of first element and length pairs for contiguous blocks of memorys
+  std::vector<std::pair<size_t, size_t>> offsets_;
   std::vector<double> xyz_; //!< Storage location for vertex data (optionally used)
   std::vector<int32_t> conn_; //!< Storage location for connectivity data (optionally used)
   bool internal_storage_; //!< indicates whether or not information is stored internally

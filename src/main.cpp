@@ -1,4 +1,5 @@
 
+#include <cstdlib>
 #include <iostream>
 #include <memory>
 #include <vector>
@@ -10,11 +11,10 @@
 #include "moab/Core.hpp"
 #include "moab/Range.hpp"
 
-#include "MOABDirectAccess.h"
-
 #include "gprt.h"
 
 #include "sharedCode.h"
+#include "mb_util.hpp"
 
 #define LOG(message)                                            \
   std::cout << GPRT_TERMINAL_BLUE;                               \
@@ -28,11 +28,6 @@
 extern GPRTProgram dbl_deviceCode;
 
 #define MOAB_CHECK_ERROR(EC) if (EC != moab::MB_SUCCESS) return 1;
-
-/* forward declarations to double precision cube.
-  See gprt_data/double_cube.cpp for details */
-extern uint32_t double_indices[];
-extern double double_vertices[];
 
 void render();
 
@@ -55,7 +50,7 @@ int main(int argc, char** argv) {
       .default_value("float");
 
   try {
-    args.parse_args(argc, argv);                  // Example: ./main -abc 1.95 2.47
+    args.parse_args(argc, argv);
   }
   catch (const std::runtime_error& err) {
     std::cout << err.what() << std::endl;
@@ -80,20 +75,8 @@ int main(int argc, char** argv) {
   rval = mbi->load_file(filename.c_str());
   MOAB_CHECK_ERROR(rval);
 
-  // create a direct access manager
-  MBDirectAccess mdam (mbi.get());
-  // setup datastructs storing internal information
-
-  mdam.setup(args.get<std::vector<int>>("volume"));
-
-  int n_vertices = mdam.xyz().size() / 3;
-  int n_tris = mdam.conn().size() / 3;
-
-  // clear out the MOAB interface, we don't need it anymore
-  rval = mbi->delete_mesh();
-  MOAB_CHECK_ERROR(rval);
-
-  mbi.reset();
+  std::vector<int> volumes;
+  if (args.is_used("--volumes")) volumes = args.get<std::vector<int>>("volumes");
 
   // start up GPRT
   gprtRequestWindow(fbSize.x, fbSize.y, "S01 Single Triangle");
@@ -131,90 +114,39 @@ int main(int argc, char** argv) {
 
   gprtBuildPipeline(context);
 
-  // ------------------------------------------------------------------
-  // aabb mesh
-  // ------------------------------------------------------------------
-  auto indexBuffer
-    = gprtDeviceBufferCreate<int3>(context, n_tris, mdam.conn().data());
-
-  GPRTBufferOf<float3> singleVertexBuffer = nullptr;
-
-  // for double precision triangles, we'll also need AABBs
-  GPRTBufferOf<double3> doubleVertexBuffer = nullptr;
-  GPRTBufferOf<float3> aabbPositionsBuffer = nullptr;
-
-  if (useFloats) {
-    std::vector<float> floatVertData(n_vertices*3);
-    for (uint32_t i = 0; i < n_vertices * 3; ++i) {
-      // casting down to float here
-      floatVertData[i] = mdam.xyz()[i];
-    }
-    singleVertexBuffer = gprtDeviceBufferCreate<float3>(context, n_vertices, floatVertData.data());
-  } else {
-    doubleVertexBuffer = gprtDeviceBufferCreate<double3>(context, n_vertices, mdam.xyz().data());
-    aabbPositionsBuffer = gprtDeviceBufferCreate<float3>(context, 2*n_tris, nullptr);
-  }
-
-  GPRTGeomOf<DPTriangleData> dpGeom = nullptr;
-  GPRTGeomOf<SPTriangleData> spGeom = nullptr;
-
-  GPRTAccel blas;
-
-  if (useFloats) {
-    spGeom = gprtGeomCreate<SPTriangleData>(context, SPTriangleType);
-    gprtTrianglesSetIndices(spGeom, indexBuffer, n_tris);
-    gprtTrianglesSetVertices(spGeom, singleVertexBuffer, n_vertices);
-
-    auto spGeomData = gprtGeomGetPointer(spGeom);
-    spGeomData->vertex = gprtBufferGetHandle(singleVertexBuffer);
-    spGeomData->index = gprtBufferGetHandle(indexBuffer);
-    blas = gprtTrianglesAccelCreate(context, 1, &spGeom);
-    gprtAccelBuild(context, blas);
-  }
-  else {
-    dpGeom = gprtGeomCreate<DPTriangleData>(context, DPTriangleType);
-    gprtAABBsSetPositions(dpGeom, aabbPositionsBuffer,
-                          n_tris, 2 * sizeof(float3), 0);
-
-    auto dpGeomData = gprtGeomGetPointer(dpGeom);
-    dpGeomData->vertex = gprtBufferGetHandle(doubleVertexBuffer);
-    dpGeomData->index = gprtBufferGetHandle(indexBuffer);
-    dpGeomData->aabbs = gprtBufferGetHandle(aabbPositionsBuffer);
-
-    auto boundsProgData = gprtComputeGetPointer(DPTriangleBoundsProgram);
-    boundsProgData->vertex = gprtBufferGetHandle(doubleVertexBuffer);
-    boundsProgData->index = gprtBufferGetHandle(indexBuffer);
-    boundsProgData->aabbs = gprtBufferGetHandle(aabbPositionsBuffer);
-
-    // compute AABBs in parallel with a compute shader
-    gprtBuildShaderBindingTable(context, GPRT_SBT_COMPUTE);
-    gprtComputeLaunch1D(context, DPTriangleBoundsProgram, n_tris);
-
-    blas = gprtAABBAccelCreate(context, 1, &dpGeom);
-    gprtAccelBuild(context, blas);
-  }
+  // create colors for each volume
+  create_volume_colors(mbi.get(), volumes);
 
   // compute centroid to look at
-  const auto& xyz = mdam.xyz();
-  double3 aabbmin = double3(xyz[0],xyz[1],xyz[2]);
-  double3 aabbmax = aabbmin;
-  for (uint32_t i = 1; i < n_vertices; ++i) {
-    aabbmin = linalg::min(aabbmin, double3(xyz[i * 3 + 0],
-                                           xyz[i * 3 + 1],
-                                           xyz[i * 3 + 2]));
-    aabbmax = linalg::max(aabbmax, double3(xyz[i * 3 + 0],
-                                           xyz[i * 3 + 1],
-                                           xyz[i * 3 + 2]));
+  auto bbox = bounding_box(mbi.get());
+
+  // create geometries
+  auto tri_surfs = setup_surfaces(context, mbi.get(), SPTriangleType);
+
+  // empty the mesh library's copy (good riddance)
+  rval = mbi->delete_mesh();
+  MOAB_CHECK_ERROR(rval);
+  mbi.reset();
+
+  if (tri_surfs.size() == 0) {
+    std::cerr << "No surfaces visible" << std::endl;
+    std::exit(1);
   }
-  double3 aabbCentroid = aabbmin + (aabbmax - aabbmin) * 0.5;
+
+  std::vector<GPRTGeomOf<SPTriangleData>> geoms;
+   for (const auto& ts : tri_surfs) geoms.push_back(ts.triangle_geom_s);
+
+  GPRTAccel blas = gprtTrianglesAccelCreate(context, geoms.size(), geoms.data());
+  GPRTAccel tlas = gprtInstanceAccelCreate(context, 1, &blas);
+  gprtAccelBuild(context, blas);
+  gprtAccelBuild(context, tlas);
+
+  double3 aabbCentroid = bbox.first + (bbox.second - bbox.first) * 0.5;
 
   float3 lookFrom = float3(float(aabbCentroid.x), float(aabbCentroid.y)  - 50.f, float(aabbCentroid.z));
   float3 lookAt = float3(float(aabbCentroid.x),float(aabbCentroid.y),float(aabbCentroid.z));
   float3 lookUp = {0.f,0.f,-1.f};
   float cosFovy = 0.66f;
-
-  // clear out mdam data now that it's been transferred to device
-  mdam.clear();
 
   // ------------------------------------------------------------------
   // the group/accel for that mesh
@@ -232,21 +164,21 @@ int main(int argc, char** argv) {
 
   // need this to communicate double precision rays to intersection program
   // ray origin xyz + tmin, then ray direction xyz + tmax
-  GPRTBufferOf<double> doubleRayBuffer = nullptr;
+  // GPRTBufferOf<double> doubleRayBuffer = nullptr;
   RayGenData* rayGenData;
   if (useFloats) {
     rayGenData = gprtRayGenGetPointer(SPRayGen);
   }
-  else {
-    rayGenData = gprtRayGenGetPointer(DPRayGen);
-    doubleRayBuffer = gprtDeviceBufferCreate<double>(context,fbSize.x*fbSize.y*8);
-    rayGenData->dpRays = gprtBufferGetHandle(doubleRayBuffer);
+  // else {
+  //   rayGenData = gprtRayGenGetPointer(DPRayGen);
+  //   doubleRayBuffer = gprtDeviceBufferCreate<double>(context,fbSize.x*fbSize.y*8);
+  //   rayGenData->dpRays = gprtBufferGetHandle(doubleRayBuffer);
 
-    // Also set on geometry for intersection program
-    auto dpGeomData = gprtGeomGetPointer(dpGeom);
-    dpGeomData->fbSize = fbSize;
-    dpGeomData->dpRays = gprtBufferGetHandle(doubleRayBuffer);
-  }
+  //   // Also set on geometry for intersection program
+  //   auto dpGeomData = gprtGeomGetPointer(dpGeom);
+  //   dpGeomData->fbSize = fbSize;
+  //   dpGeomData->dpRays = gprtBufferGetHandle(doubleRayBuffer);
+  // }
   rayGenData->fbPtr = gprtBufferGetHandle(frameBuffer);
   rayGenData->fbSize = fbSize;
   rayGenData->world = gprtAccelGetHandle(world);
@@ -379,20 +311,21 @@ int main(int argc, char** argv) {
 
   LOG("cleaning up ...");
 
-  if (singleVertexBuffer) gprtBufferDestroy(singleVertexBuffer);
-  if (doubleVertexBuffer) gprtBufferDestroy(doubleVertexBuffer);
-  gprtBufferDestroy(indexBuffer);
-  if (aabbPositionsBuffer) gprtBufferDestroy(aabbPositionsBuffer);
+  // if (singleVertexBuffer) gprtBufferDestroy(singleVertexBuffer);
+  // if (doubleVertexBuffer) gprtBufferDestroy(doubleVertexBuffer);
+  // gprtBufferDestroy(indexBuffer);
+  // if (aabbPositionsBuffer) gprtBufferDestroy(aabbPositionsBuffer);
   gprtBufferDestroy(frameBuffer);
-  if (doubleRayBuffer) gprtBufferDestroy(doubleRayBuffer);
+  // if (doubleRayBuffer) gprtBufferDestroy(doubleRayBuffer);
   if (SPRayGen) gprtRayGenDestroy(SPRayGen);
-  if (DPRayGen) gprtRayGenDestroy(DPRayGen);
+  // if (DPRayGen) gprtRayGenDestroy(DPRayGen);
   gprtMissDestroy(miss);
   gprtComputeDestroy(DPTriangleBoundsProgram);
   gprtAccelDestroy(blas);
   gprtAccelDestroy(world);
-  if (dpGeom) gprtGeomDestroy(dpGeom);
-  if (spGeom) gprtGeomDestroy(spGeom);
+  // if (dpGeom) gprtGeomDestroy(dpGeom);
+  // for (auto& spGeom : spGeoms) gprtGeomDestroy(spGeom);
+  for (auto& g : tri_surfs) { g.cleanup(); }
   gprtGeomTypeDestroy(DPTriangleType);
   gprtGeomTypeDestroy(SPTriangleType);
   gprtModuleDestroy(module);
