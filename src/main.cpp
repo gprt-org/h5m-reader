@@ -43,9 +43,16 @@ int main(int argc, char** argv) {
 
   argparse::ArgumentParser args("GPRT H5M READER");
 
-  args.add_argument("filename");
-  args.add_argument("--volume").default_value(-1).scan<'i', int>();
-  args.add_argument("--type").default_value("float");
+  args.add_argument("filename")
+      .help("Path to the DAGMC file to view");
+  args.add_argument("--volumes")
+      .help("Subset of volume IDs to visualize")
+      .nargs(argparse::nargs_pattern::any)
+      .default_value(std::vector<double>())
+      .scan<'i', int>();
+  args.add_argument("--type")
+      .help("Floating point primitive representation (one of 'float' or 'double'")
+      .default_value("float");
 
   try {
     args.parse_args(argc, argv);                  // Example: ./main -abc 1.95 2.47
@@ -76,7 +83,8 @@ int main(int argc, char** argv) {
   // create a direct access manager
   MBDirectAccess mdam (mbi.get());
   // setup datastructs storing internal information
-  mdam.setup(args.get<int>("volume"));
+
+  mdam.setup(args.get<std::vector<int>>("volume"));
 
   int n_vertices = mdam.xyz().size() / 3;
   int n_tris = mdam.conn().size() / 3;
