@@ -20,7 +20,7 @@ public:
   MBDirectAccess(std::shared_ptr<Interface> mbi) : mbi(mbi.get()) {};
 
   //! \brief Initialize internal structures
-  void setup();
+  void setup(int vol_id = -1);
 
   //! \brief Reset internal data structures, but maintain MOAB isntance
   void clear();

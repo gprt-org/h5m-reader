@@ -133,7 +133,8 @@ GPRT_COMPUTE_PROGRAM(DPTriangle, (DPTriangleData, record), (1,1,1))
 GPRT_CLOSEST_HIT_PROGRAM(DPTriangle, (DPTriangleData, record), (Payload, payload), (DPAttribute, attribute))
 {
   double2 barycentrics = attribute.bc;
-  payload.color = float3(barycentrics.x, barycentrics.y, 0.0);
+  payload.color = float3(barycentrics.x,     barycentrics.y, 0.0);
+  // payload.color = float3(0.0, 0.0, 1.0);
 }
 
 double3 dcross (in double3 a, in double3 b) { return double3(a.y*b.z-a.z*b.y, a.z*b.x-a.x*b.z, a.x*b.y-a.y*b.x); }

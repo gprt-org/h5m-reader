@@ -1,19 +1,74 @@
+#include <iostream>
 #include <sstream>
 
 // MOAB
 #include "moab/Range.hpp"
 
 #include "MOABDirectAccess.h"
+#include "MBTagConventions.hpp"
 
 void
-MBDirectAccess::setup() {
+MBDirectAccess::setup(int vol_id) {
   ErrorCode rval;
 
-  // setup triangles
   Range tris;
-  rval = mbi->get_entities_by_dimension(0, 2, tris, true);
+
+  if (vol_id >= 0) {
+    // get the category tag handle
+    Tag dim_tag;
+    rval = mbi->tag_get_handle(GEOM_DIMENSION_TAG_NAME, dim_tag);
+    MB_CHK_SET_ERR_CONT(rval, "Failed to get category tag handle");
+
+    Tag id_tag = mbi->globalId_tag();
+
+    int dim = 3;
+    const Tag tags[] = {id_tag, dim_tag};
+    const void* const vals[] = {&vol_id, &dim};
+
+    // retrieve all volume sets from the MOAB model
+    Range vol_sets;
+    rval = mbi->get_entities_by_type_and_tag(0, MBENTITYSET, tags, vals, 2, vol_sets  );
+    MB_CHK_SET_ERR_CONT(rval, "Failed to retrieve volume sets");
+
+    if (vol_sets.size() == 0) {
+      std::cerr << "Could not find volume with ID: " << vol_id << std::endl;
+      std::exit(1);
+    }
+
+    if (vol_sets.size() > 1) {
+      std::cerr << "Found more than one volume with ID: " << vol_id << std::endl;
+    }
+
+    std::cout << "Vol sets size: " <<  vol_sets.size() << std::endl;
+    // get the ID of the volume
+    // std::vector<int> vol_ids(vol_sets.size());
+
+    // // display the volume ID of each discovered volume
+    // rval = mbi->tag_get_data(id_tag, vol_sets, vol_ids.data());
+    // MB_CHK_SET_ERR_CONT(rval, "Failed to get volume ID tag data");
+
+    Range children;
+    rval = mbi->get_child_meshsets(vol_sets[0], children);
+    MB_CHK_SET_ERR_CONT(rval, "Failed to get child meshsets (surface sets) of volume");
+
+    for (auto child : children) {
+      rval = mbi->get_entities_by_dimension(child, 2, tris, true);
+      MB_CHK_SET_ERR_CONT(rval, "Failed to get triangle elements on surface");
+    }
+
+  } else {
+    // setup triangles
+    rval = mbi->get_entities_by_dimension(0, 2, tris, true);
+    MB_CHK_SET_ERR_CONT(rval, "Failed to get all elements of dimension 2 (tris)");
+    num_elements_ = tris.size();
+  }
+
+  std::cout << "N triangles: " << tris.size() << std::endl;
+
+  // get the first global triangle
+  Range all_tris;
+  rval = mbi->get_entities_by_dimension(0, 2, all_tris, true);
   MB_CHK_SET_ERR_CONT(rval, "Failed to get all elements of dimension 2 (tris)");
-  num_elements_ = tris.size();
 
   // only supporting triangle elements for now
   if (!tris.all_of_type(MBTRI)) { throw std::runtime_error("Not all 2D elements are triangles"); }
@@ -31,8 +86,11 @@ MBDirectAccess::setup() {
     // add first element/length pair to the set of first elements
     first_elements_.push_back({*tris_it, n_elements});
 
+    // offset is always relative to first global triangle
     int offset = tris_it - tris.begin();
-    for (int i = 0; i < 3*n_elements; i++) conn_[offset + i] = conntmp[i] - 1;
+    std::cout << "Offset: " << offset << std::endl;
+    std::cout << "N elements: " << n_elements << std::endl;
+    for (int i = 0; i < 3*n_elements; i++) conn_[3*offset + i] = conntmp[i] - all_tris.front();
 
     // move iterator forward by the number of triangles in this contiguous memory block
     tris_it += n_elements;

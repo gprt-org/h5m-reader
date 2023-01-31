@@ -44,7 +44,8 @@ int main(int argc, char** argv) {
   argparse::ArgumentParser args("GPRT H5M READER");
 
   args.add_argument("filename");
-  args.add_argument("type");
+  args.add_argument("--volume").default_value(-1).scan<'i', int>();
+  args.add_argument("--type").default_value("float");
 
   try {
     args.parse_args(argc, argv);                  // Example: ./main -abc 1.95 2.47
@@ -60,6 +61,11 @@ int main(int argc, char** argv) {
   auto type = args.get<std::string>("type");
   bool useFloats = (type == "float");
 
+  if (type != "double" && type != "float") {
+    std::cerr << "Error: primitive representation must be set to either 'float' or 'double'." << std::endl;
+    std::exit(1);
+  }
+
   std::shared_ptr<moab::Core> mbi = std::make_shared<moab::Core>();
   moab::ErrorCode rval;
 
@@ -70,7 +76,7 @@ int main(int argc, char** argv) {
   // create a direct access manager
   MBDirectAccess mdam (mbi.get());
   // setup datastructs storing internal information
-  mdam.setup();
+  mdam.setup(args.get<int>("volume"));
 
   int n_vertices = mdam.xyz().size() / 3;
   int n_tris = mdam.conn().size() / 3;
@@ -98,15 +104,15 @@ int main(int argc, char** argv) {
                                 module,"DPTriangle");
   gprtGeomTypeSetIntersectionProg(DPTriangleType,0,
                                   module,"DPTrianglePlucker");
-  
+
   // For single precision triangles
   auto SPTriangleType = gprtGeomTypeCreate<SPTriangleData>(context, GPRT_TRIANGLES);
   gprtGeomTypeSetClosestHitProg(SPTriangleType,0, module,"SPTriangle");
-  
+
   // For launching double precision rays
   GPRTRayGenOf<RayGenData> DPRayGen = nullptr;
   if (!useFloats) DPRayGen = gprtRayGenCreate<RayGenData>(context, module, "DPRayGen");
-  
+
   // For launching single precision rays
   GPRTRayGenOf<RayGenData> SPRayGen = nullptr;
   if (useFloats) SPRayGen = gprtRayGenCreate<RayGenData>(context, module, "SPRayGen");
@@ -130,7 +136,7 @@ int main(int argc, char** argv) {
   GPRTBufferOf<float3> aabbPositionsBuffer = nullptr;
 
   if (useFloats) {
-    std::vector<float> floatVertData(n_vertices*3); 
+    std::vector<float> floatVertData(n_vertices*3);
     for (uint32_t i = 0; i < n_vertices * 3; ++i) {
       // casting down to float here
       floatVertData[i] = mdam.xyz()[i];
@@ -166,7 +172,7 @@ int main(int argc, char** argv) {
     dpGeomData->vertex = gprtBufferGetHandle(doubleVertexBuffer);
     dpGeomData->index = gprtBufferGetHandle(indexBuffer);
     dpGeomData->aabbs = gprtBufferGetHandle(aabbPositionsBuffer);
-    
+
     auto boundsProgData = gprtComputeGetPointer(DPTriangleBoundsProgram);
     boundsProgData->vertex = gprtBufferGetHandle(doubleVertexBuffer);
     boundsProgData->index = gprtBufferGetHandle(indexBuffer);
@@ -212,7 +218,7 @@ int main(int argc, char** argv) {
   auto missData = gprtMissGetPointer(miss);
   missData->color0 = float3(0.1f, 0.1f, 0.1f);
   missData->color1 = float3(0.f, 0.f, 0.f);
-  
+
   // ----------- set raygen variables  ----------------------------
   auto frameBuffer = gprtDeviceBufferCreate<uint32_t>(context, fbSize.x*fbSize.y);
 
@@ -227,16 +233,16 @@ int main(int argc, char** argv) {
     rayGenData = gprtRayGenGetPointer(DPRayGen);
     doubleRayBuffer = gprtDeviceBufferCreate<double>(context,fbSize.x*fbSize.y*8);
     rayGenData->dpRays = gprtBufferGetHandle(doubleRayBuffer);
-  
+
     // Also set on geometry for intersection program
     auto dpGeomData = gprtGeomGetPointer(dpGeom);
     dpGeomData->fbSize = fbSize;
-    dpGeomData->dpRays = gprtBufferGetHandle(doubleRayBuffer);  
+    dpGeomData->dpRays = gprtBufferGetHandle(doubleRayBuffer);
   }
   rayGenData->fbPtr = gprtBufferGetHandle(frameBuffer);
   rayGenData->fbSize = fbSize;
-  rayGenData->world = gprtAccelGetHandle(world);    
-  
+  rayGenData->world = gprtAccelGetHandle(world);
+
   // ##################################################################
   // build *SBT* required to trace the groups
   // ##################################################################
