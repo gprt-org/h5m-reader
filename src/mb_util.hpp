@@ -18,17 +18,24 @@ float3 rnd_color() {
   return normalize(float3( std::rand(), std::rand(), std::rand()));
 }
 
+template<class T, typename R>
 struct MBTriangleSurface {
 
-  std::vector<float3> vertices;
+  int n_tris;
+  std::vector<R> vertices;
   std::vector<uint3> connectivity;
-  GPRTBufferOf<float3> vertex_buffer_s;
-  GPRTBufferOf<float3> vertex_buffer_d;
+  GPRTBufferOf<R> vertex_buffer_s;
   GPRTBufferOf<uint3> conn_buffer;
-  GPRTGeomOf<SPTriangleData> triangle_geom_s;
-  GPRTGeomOf<DPTriangleData> triangle_geom_d;
+  GPRTBufferOf<float3> aabb_buffer;
+  GPRTGeomOf<T> triangle_geom_s;
+  bool aabbs_present {false};
 
-  MBTriangleSurface(GPRTContext context, moab::Interface* mbi, GPRTGeomTypeOf<SPTriangleData> g_type, int surface_id) {
+  struct SurfaceData {
+    std::vector<double> coords;
+    std::vector<uint3> connectivity;
+  };
+
+  MBTriangleSurface(GPRTContext context, moab::Interface* mbi, GPRTGeomTypeOf<T> g_type, int surface_id) {
     ErrorCode rval;
 
     // get this surface's handle
@@ -50,12 +57,15 @@ struct MBTriangleSurface {
         std::cerr << "Incorrect number of surfaces found (" << surf_sets.size() << ") with ID " << surface_id << std::endl;
         std::exit(1);
     }
+
     EntityHandle surf_handle = surf_sets[0];
 
     // get the triangles for this surface
     std::vector<EntityHandle> surf_tris;
     rval = mbi->get_entities_by_dimension(surf_handle, 2, surf_tris);
     MB_CHK_SET_ERR_CONT(rval, "Failed to get surface " << surface_id << "'s triangles");
+
+    n_tris = surf_tris.size();
 
     std::vector<EntityHandle> conn;
     rval = mbi->get_connectivity(surf_tris.data(), surf_tris.size(), conn);
@@ -64,20 +74,15 @@ struct MBTriangleSurface {
     Range verts;
     verts.insert<std::vector<EntityHandle>>(conn.begin(), conn.end());
 
-    // std::cout << "Surface ID: " << surface_id << std::endl;
-    // std::cout << "# triangles: " << surf_tris.size() << std::endl;
-    // std::cout << "# vertices: " << verts.size() << std::endl;
-    // std::cout << "Connectivity size: " << conn.size() << std::endl;
-
     std::vector<double> coords(3*verts.size());
 
     rval = mbi->get_coords(verts, coords.data());
     MB_CHK_SET_ERR_CONT(rval, "Failed to get vertex coordinates for surface " << surface_id);
 
-    vertices.resize(verts.size());
+    vertices.resize(3*verts.size());
 
     for (int i = 0; i < verts.size(); i++) {
-        vertices[i] = float3(coords[3*i], coords[3*i+1], coords[3*i+2]);
+        vertices[i] = R(coords[3*i], coords[3*i+1], coords[3*i+2]);
     }
 
     connectivity.resize(surf_tris.size());
@@ -86,13 +91,12 @@ struct MBTriangleSurface {
         connectivity[i] = uint3(verts.index(conn[3*i]), verts.index(conn[3*i+1]), verts.index(conn[3*i+2]));
     }
 
-    vertex_buffer_s = gprtDeviceBufferCreate<float3>(context, vertices.size(), vertices.data());
+    vertex_buffer_s = gprtDeviceBufferCreate<R>(context, vertices.size(), vertices.data());
     conn_buffer = gprtDeviceBufferCreate<uint3>(context, connectivity.size(), connectivity.data());
-    triangle_geom_s = gprtGeomCreate(context, g_type);
-    gprtTrianglesSetVertices(triangle_geom_s, vertex_buffer_s, vertices.size());
-    gprtTrianglesSetIndices(triangle_geom_s, conn_buffer, connectivity.size());
 
-    SPTriangleData* geom_data = gprtGeomGetPointer(triangle_geom_s);
+    triangle_geom_s = gprtGeomCreate<T>(context, g_type);
+
+    T* geom_data = gprtGeomGetPointer(triangle_geom_s);
     geom_data->vertex = gprtBufferGetHandle(vertex_buffer_s);
     geom_data->index = gprtBufferGetHandle(conn_buffer);
 
@@ -102,11 +106,37 @@ struct MBTriangleSurface {
     MB_CHK_SET_ERR_CONT(rval, "Failed to find parents of surface " << surface_id);
 
     geom_data->color_fwd = volume_colors.at(parents[0]);
+
     if (parents.size() == 2) {
       geom_data->color_bwd = volume_colors.at(parents[1]);
     } else {
       geom_data->color_bwd = volume_colors[-1];
     }
+
+  }
+
+  void aabbs(GPRTContext context, GPRTModule module) {
+    aabb_buffer = gprtDeviceBufferCreate<float3>(context, 2*n_tris, nullptr);
+    gprtAABBsSetPositions(triangle_geom_s, aabb_buffer, n_tris, 2*sizeof(float3), 0);
+
+    T* geom_data = gprtGeomGetPointer(triangle_geom_s);
+    geom_data->aabbs = gprtBufferGetHandle(aabb_buffer);
+
+    GPRTComputeOf<T> boundsProg = gprtComputeCreate<T>(context, module, "DPTriangle");
+    auto boundsProgData = gprtComputeGetPointer(boundsProg);
+    boundsProgData->vertex = gprtBufferGetHandle(vertex_buffer_s);
+    boundsProgData->index = gprtBufferGetHandle(conn_buffer);
+    boundsProgData->aabbs = gprtBufferGetHandle(aabb_buffer);
+
+    gprtBuildPipeline(context);
+    gprtBuildShaderBindingTable(context, GPRT_SBT_COMPUTE);
+    gprtComputeLaunch1D(context, boundsProg, n_tris);
+    aabbs_present = true;
+  }
+
+  void set_buffers() {
+    gprtTrianglesSetVertices(triangle_geom_s, vertex_buffer_s, vertices.size());
+    gprtTrianglesSetIndices(triangle_geom_s, conn_buffer, connectivity.size());
   }
 
   void cleanup() {
@@ -115,6 +145,9 @@ struct MBTriangleSurface {
     gprtBufferDestroy(conn_buffer);
   }
 };
+
+using SPTriangleSurface = MBTriangleSurface<SPTriangleData, float3>;
+using DPTriangleSurface = MBTriangleSurface<DPTriangleData, double3>;
 
 void create_volume_colors(Interface* mbi, std::vector<int> vol_ids = {}) {
   ErrorCode rval;
@@ -152,7 +185,8 @@ void create_volume_colors(Interface* mbi, std::vector<int> vol_ids = {}) {
   }
 }
 
-std::vector<MBTriangleSurface> setup_surfaces(GPRTContext context, Interface* mbi, GPRTGeomTypeOf<SPTriangleData> g_type) {
+template<class T, class G>
+std::vector<T> setup_surfaces(GPRTContext context, Interface* mbi, GPRTGeomTypeOf<G> g_type) {
     ErrorCode rval;
 
     // get this surface's handle
@@ -181,10 +215,10 @@ std::vector<MBTriangleSurface> setup_surfaces(GPRTContext context, Interface* mb
       std::exit(1);
     }
 
-    std::vector<MBTriangleSurface> out;
+    std::vector<T> out;
     for (int i = 0; i < surf_sets.size(); i ++) {
         if (visible_surfs.count(surf_sets[i]) == 0) continue;
-        out.emplace_back(std::move(MBTriangleSurface(context, mbi, g_type, surf_ids[i])));
+        out.emplace_back(std::move(T(context, mbi, g_type, surf_ids[i])));
     }
 
     return out;

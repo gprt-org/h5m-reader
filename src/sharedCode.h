@@ -31,10 +31,14 @@ struct DPTriangleData
   alignas(16) gprt::Buffer vertex; // float *
   /*! array/buffer of AABBs */
   alignas(16) gprt::Buffer aabbs;
+
+
   /*! array/buffer of double precision rays */
   alignas(16) gprt::Buffer dpRays;
   alignas(8) int2 fbSize;
-  alignas(16) float3 color;
+  /*! color for these triangles */
+  alignas(16) float3 color_fwd;
+  alignas(16) float3 color_bwd;
 };
 
 struct SPTriangleData

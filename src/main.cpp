@@ -32,7 +32,7 @@ extern GPRTProgram dbl_deviceCode;
 void render();
 
 // initial image resolution
-const int2 fbSize = {1080,720};
+const int2 fbSize = {2560, 1440};
 
 int main(int argc, char** argv) {
 
@@ -89,8 +89,6 @@ int main(int argc, char** argv) {
   // For double precision triangles
   auto DPTriangleType = gprtGeomTypeCreate<DPTriangleData>(context,
                         GPRT_AABBS);
-  GPRTComputeOf<DPTriangleData> DPTriangleBoundsProgram
-    = gprtComputeCreate<DPTriangleData>(context,module,"DPTriangle");
   gprtGeomTypeSetClosestHitProg(DPTriangleType,0,
                                 module,"DPTriangle");
   gprtGeomTypeSetIntersectionProg(DPTriangleType,0,
@@ -121,25 +119,41 @@ int main(int argc, char** argv) {
   auto bbox = bounding_box(mbi.get());
 
   // create geometries
-  auto tri_surfs = setup_surfaces(context, mbi.get(), SPTriangleType);
+  std::vector<SPTriangleSurface> SPTriSurfs;
+  std::vector<DPTriangleSurface> DPTriSurfs;
+
+  std::vector<GPRTGeomOf<SPTriangleData>> SPgeoms;
+  std::vector<GPRTGeomOf<DPTriangleData>> DPgeoms;
+
+  GPRTAccel blas;
+
+  if (useFloats) {
+    SPTriSurfs = setup_surfaces<SPTriangleSurface, SPTriangleData>(context, mbi.get(), SPTriangleType);
+    for (auto& ts : SPTriSurfs) {
+      ts.set_buffers();
+      SPgeoms.push_back(ts.triangle_geom_s);
+    }
+    blas = gprtTrianglesAccelCreate(context, SPgeoms.size(), SPgeoms.data());
+    gprtAccelBuild(context, blas);
+  } else {
+    DPTriSurfs = setup_surfaces<DPTriangleSurface, DPTriangleData>(context, mbi.get(), DPTriangleType);
+
+    for (auto& ts : DPTriSurfs) ts.aabbs(context, module);
+
+    for (const auto& ts : DPTriSurfs) DPgeoms.push_back(ts.triangle_geom_s);
+    blas = gprtAABBAccelCreate(context, DPgeoms.size(), DPgeoms.data());
+    gprtAccelBuild(context, blas);
+  }
 
   // empty the mesh library's copy (good riddance)
   rval = mbi->delete_mesh();
   MOAB_CHECK_ERROR(rval);
   mbi.reset();
 
-  if (tri_surfs.size() == 0) {
+  if (SPTriSurfs.size() == 0 && DPTriSurfs.size() == 0) {
     std::cerr << "No surfaces visible" << std::endl;
     std::exit(1);
   }
-
-  std::vector<GPRTGeomOf<SPTriangleData>> geoms;
-   for (const auto& ts : tri_surfs) geoms.push_back(ts.triangle_geom_s);
-
-  GPRTAccel blas = gprtTrianglesAccelCreate(context, geoms.size(), geoms.data());
-  GPRTAccel tlas = gprtInstanceAccelCreate(context, 1, &blas);
-  gprtAccelBuild(context, blas);
-  gprtAccelBuild(context, tlas);
 
   double3 aabbCentroid = bbox.first + (bbox.second - bbox.first) * 0.5;
 
@@ -164,21 +178,23 @@ int main(int argc, char** argv) {
 
   // need this to communicate double precision rays to intersection program
   // ray origin xyz + tmin, then ray direction xyz + tmax
-  // GPRTBufferOf<double> doubleRayBuffer = nullptr;
+  GPRTBufferOf<double> doubleRayBuffer = nullptr;
   RayGenData* rayGenData;
   if (useFloats) {
     rayGenData = gprtRayGenGetPointer(SPRayGen);
   }
-  // else {
-  //   rayGenData = gprtRayGenGetPointer(DPRayGen);
-  //   doubleRayBuffer = gprtDeviceBufferCreate<double>(context,fbSize.x*fbSize.y*8);
-  //   rayGenData->dpRays = gprtBufferGetHandle(doubleRayBuffer);
+  else {
+    rayGenData = gprtRayGenGetPointer(DPRayGen);
+    doubleRayBuffer = gprtDeviceBufferCreate<double>(context,fbSize.x*fbSize.y*8);
+    rayGenData->dpRays = gprtBufferGetHandle(doubleRayBuffer);
 
-  //   // Also set on geometry for intersection program
-  //   auto dpGeomData = gprtGeomGetPointer(dpGeom);
-  //   dpGeomData->fbSize = fbSize;
-  //   dpGeomData->dpRays = gprtBufferGetHandle(doubleRayBuffer);
-  // }
+
+    for (auto& ts : DPTriSurfs) {
+      auto dpGeomData = gprtGeomGetPointer(ts.triangle_geom_s);
+      dpGeomData->fbSize = fbSize;
+      dpGeomData->dpRays = gprtBufferGetHandle(doubleRayBuffer);
+    }
+  }
   rayGenData->fbPtr = gprtBufferGetHandle(frameBuffer);
   rayGenData->fbSize = fbSize;
   rayGenData->world = gprtAccelGetHandle(world);
@@ -320,12 +336,12 @@ int main(int argc, char** argv) {
   if (SPRayGen) gprtRayGenDestroy(SPRayGen);
   // if (DPRayGen) gprtRayGenDestroy(DPRayGen);
   gprtMissDestroy(miss);
-  gprtComputeDestroy(DPTriangleBoundsProgram);
   gprtAccelDestroy(blas);
   gprtAccelDestroy(world);
   // if (dpGeom) gprtGeomDestroy(dpGeom);
   // for (auto& spGeom : spGeoms) gprtGeomDestroy(spGeom);
-  for (auto& g : tri_surfs) { g.cleanup(); }
+  for (auto& g : SPTriSurfs) { g.cleanup(); }
+  for (auto& g : DPTriSurfs) { g.cleanup();}
   gprtGeomTypeDestroy(DPTriangleType);
   gprtGeomTypeDestroy(SPTriangleType);
   gprtModuleDestroy(module);

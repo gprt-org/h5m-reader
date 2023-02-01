@@ -132,9 +132,11 @@ GPRT_COMPUTE_PROGRAM(DPTriangle, (DPTriangleData, record), (1,1,1))
 
 GPRT_CLOSEST_HIT_PROGRAM(DPTriangle, (DPTriangleData, record), (Payload, payload), (DPAttribute, attribute))
 {
-  double2 barycentrics = attribute.bc;
-  payload.color = float3(barycentrics.x,     barycentrics.y, 0.0);
-  // payload.color = float3(0.0, 0.0, 1.0);
+  uint hit_kind = HitKind();
+  if (hit_kind == HIT_KIND_TRIANGLE_FRONT_FACE)
+    payload.color = record.color_bwd;
+  else
+    payload.color = record.color_fwd;
 }
 
 double3 dcross (in double3 a, in double3 b) { return double3(a.y*b.z-a.z*b.y, a.z*b.x-a.x*b.z, a.x*b.y-a.y*b.x); }
@@ -295,7 +297,7 @@ GPRT_INTERSECTION_PROGRAM(DPTrianglePlucker, (DPTriangleData, record))
   double u = plucker_coord2 * inverse_sum;
   double v = plucker_coord0 * inverse_sum;
 
-  if( u<0.0 || v<0.0 || (u+v)>1.0 ) t = -1.0;
+  if( u < 0.0 || v < 0.0 || (u+v) > 1.0 ) t = -1.0;
 
   if (t > tCurrent) return;
   if (t < tMin) return;
@@ -317,8 +319,6 @@ struct SPAttribute
 
 GPRT_CLOSEST_HIT_PROGRAM(SPTriangle, (SPTriangleData, record), (Payload, payload), (SPAttribute, attribute))
 {
-  float2 barycentrics = attribute.bc;
-
   uint hit_kind = HitKind();
 
   if (hit_kind == HIT_KIND_TRIANGLE_FRONT_FACE)
