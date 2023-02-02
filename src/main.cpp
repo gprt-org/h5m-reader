@@ -225,8 +225,13 @@ int main(int argc, char** argv) {
       lastxpos = xpos;
       lastypos = ypos;
     }
+
+    float dx = xpos - lastxpos;
+    float dy = ypos - lastypos;
+
     int state = gprtGetMouseButton(context, GPRT_MOUSE_BUTTON_LEFT);
     int rstate = gprtGetMouseButton(context, GPRT_MOUSE_BUTTON_RIGHT);
+    int mstate = gprtGetMouseButton(context, GPRT_MOUSE_BUTTON_MIDDLE);
 
     int w_state = gprtGetKey(context, GPRT_KEY_W);
     int c_state = gprtGetKey(context, GPRT_KEY_C);
@@ -250,8 +255,8 @@ int main(int argc, char** argv) {
       // step 1 : Calculate the amount of rotation given the mouse movement.
       float deltaAngleX = (2 * M_PI / fbSize.x);
       float deltaAngleY = (M_PI / fbSize.y);
-      float xAngle = (lastxpos - xpos) * deltaAngleX;
-      float yAngle = (lastypos - ypos) * deltaAngleY;
+      float xAngle = -dx * deltaAngleX;
+      float yAngle = -dy * deltaAngleY;
 
       // step 2: Rotate the camera around the pivot point on the first axis.
       float4x4 rotationMatrixX = rotation_matrix(rotation_quat(lookUp, xAngle));
@@ -283,9 +288,6 @@ int main(int argc, char** argv) {
     }
 
     if (rstate == GPRT_PRESS) {
-      gprtGetCursorPos(context, &xpos, &ypos);
-      float dy = ypos - lastypos;
-
       float3 view_vec = lookFrom - lookAt;
 
       if (dy > 0.0) {
@@ -301,6 +303,36 @@ int main(int argc, char** argv) {
       lookFrom = lookAt + view_vec;
 
       rayGenData->camera.pos = lookFrom;
+      gprtBuildShaderBindingTable(context, GPRT_SBT_RAYGEN);
+    }
+
+    if (mstate == GPRT_PRESS) {
+      float4 position = {lookFrom.x, lookFrom.y, lookFrom.z, 1.f};
+      float4 pivot = {lookAt.x, lookAt.y, lookAt.z, 1.0};
+      float3 lookRight = cross(lookUp, normalize(pivot - position).xyz());
+
+      float3 translation = lookRight * dx + lookUp * -dy;
+
+      lookFrom = lookFrom + translation;
+      lookAt = lookAt + translation;
+
+      // ----------- compute variable values  ------------------
+      float3 camera_pos = lookFrom;
+      float3 camera_d00
+        = normalize(lookAt-lookFrom);
+      float aspect = float(fbSize.x) / float(fbSize.y);
+      float3 camera_ddu
+        = cosFovy * aspect * normalize(cross(camera_d00,lookUp));
+      float3 camera_ddv
+        = cosFovy * normalize(cross(camera_ddu,camera_d00));
+      camera_d00 -= 0.5f * camera_ddu;
+      camera_d00 -= 0.5f * camera_ddv;
+
+      // ----------- set variables  ----------------------------
+      rayGenData->camera.pos = camera_pos;
+      rayGenData->camera.dir_00 = camera_d00;
+      rayGenData->camera.dir_du = camera_ddu;
+      rayGenData->camera.dir_dv = camera_ddv;
       gprtBuildShaderBindingTable(context, GPRT_SBT_RAYGEN);
     }
 
