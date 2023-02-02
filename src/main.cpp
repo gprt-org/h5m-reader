@@ -43,11 +43,10 @@ int main(int argc, char** argv) {
   args.add_argument("--volumes")
       .help("Subset of volume IDs to visualize")
       .nargs(argparse::nargs_pattern::any)
-      .default_value(std::vector<double>())
       .scan<'i', int>();
   args.add_argument("--type")
       .help("Floating point primitive representation (one of 'float' or 'double'")
-      .default_value("float");
+      .default_value(std::string("float"));
 
   try {
     args.parse_args(argc, argv);
@@ -60,9 +59,9 @@ int main(int argc, char** argv) {
 
   auto filename = args.get<std::string>("filename");
 
-  auto type = args.get<std::string>("type");
-  bool useFloats = (type == "float");
+  std::string type = args.get<std::string>("type");
 
+  bool useFloats = (type == "float");
   if (type != "double" && type != "float") {
     std::cerr << "Error: primitive representation must be set to either 'float' or 'double'." << std::endl;
     std::exit(1);
