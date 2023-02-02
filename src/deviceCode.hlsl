@@ -74,7 +74,7 @@ GPRT_RAYGEN_PROGRAM(DPRayGen, (RayGenData, record))
     color = float3(0.0f, 0.0f, 0.0f);
   }
 
-  gprt::store(record.fbPtr, fbOfs, color);
+  gprt::store(record.fbPtr, fbOfs, gprt::make_bgra(color));
 }
 
 GPRT_RAYGEN_PROGRAM(SPRayGen, (RayGenData, record))
@@ -331,7 +331,19 @@ GPRT_INTERSECTION_PROGRAM(DPTrianglePlucker, (DPTriangleData, record))
   attr.bc = double2(u, v);
   float f32t = float(t);
   if (double(f32t) < t) f32t = next_after(f32t);
-  ReportHit(f32t, /*hitKind*/ 0, attr);
+
+  // compute the triangle normal
+  double3 norm = dcross(double3(v1 - v0), double3(v2 - v0));
+
+  uint hit_kind;
+
+  if (dot(norm, direction) > 0 ) {
+    hit_kind = HIT_KIND_TRIANGLE_BACK_FACE;
+  } else {
+    hit_kind = HIT_KIND_TRIANGLE_FRONT_FACE;
+  }
+
+  ReportHit(f32t, hit_kind, attr);
 }
 
 struct SPAttribute
@@ -342,7 +354,6 @@ struct SPAttribute
 GPRT_CLOSEST_HIT_PROGRAM(SPTriangle, (SPTriangleData, record), (Payload, payload), (SPAttribute, attribute))
 {
   uint hit_kind = HitKind();
-
   if (hit_kind == HIT_KIND_TRIANGLE_FRONT_FACE)
     payload.vol_id = record.vols[0];
   else
