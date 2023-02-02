@@ -100,19 +100,23 @@ struct MBTriangleSurface {
     geom_data->vertex = gprtBufferGetHandle(vertex_buffer_s);
     geom_data->index = gprtBufferGetHandle(conn_buffer);
 
-    // find the parent volumes of this surface set
-    Range parents;
-    rval = mbi->get_parent_meshsets(surf_handle, parents);
-    MB_CHK_SET_ERR_CONT(rval, "Failed to find parents of surface " << surface_id);
+    // get the geom sense tag
+    Tag geom_sense;
+    const char GEOM_SENSE_2_TAG_NAME[] = "GEOM_SENSE_2";
+    rval = mbi->tag_get_handle(GEOM_SENSE_2_TAG_NAME, geom_sense);
+    MB_CHK_SET_ERR_CONT(rval, "Failed to get the geometry sense tag");
 
-    geom_data->color_fwd = volume_colors.at(parents[0]);
+    std::array<EntityHandle, 2> parent_vols;
+    rval = mbi->tag_get_data(geom_sense, &surf_handle, 1, parent_vols.data());
+    MB_CHK_SET_ERR_CONT(rval, "Failed to get the geometry sense of surface " << surface_id);
 
-    if (parents.size() == 2) {
-      geom_data->color_bwd = volume_colors.at(parents[1]);
-    } else {
-      geom_data->color_bwd = volume_colors[-1];
-    }
+    std::array<int, 2> parent_ids = {-1 , -1};
+    int parents_size = parent_vols[1] == 0 ? 1 : 2;
+    rval = mbi->tag_get_data(id_tag, parent_vols.data(), parents_size, parent_ids.data());
+    MB_CHK_SET_ERR_CONT(rval, "Failed to get parent volume IDs");
 
+    geom_data->vols[0] = parent_ids[0];
+    geom_data->vols[1] = parent_ids[1];
   }
 
   void aabbs(GPRTContext context, GPRTModule module) {
@@ -201,9 +205,6 @@ std::vector<T> setup_surfaces(GPRTContext context, Interface* mbi, GPRTGeomTypeO
     Range surf_sets;
     rval = mbi->get_entities_by_type_and_tag(0, MBENTITYSET, tags, vals, 1, surf_sets);
     MB_CHK_SET_ERR_CONT(rval, "Failed to get surface sets");
-
-    // std::cout << "Found " << surf_sets.size() << " surfaces" << std::endl;
-    // std::cout << "Surfaces: " << surf_sets.str_rep() << std::endl;
 
     Tag id_tag = mbi->globalId_tag();
     std::vector<int> surf_ids(surf_sets.size());

@@ -22,10 +22,11 @@
 
 #include "sharedCode.h"
 #include "gprt.h"
+#include "rng.h"
 
 struct Payload
 {
-[[vk::location(0)]] float3 color;
+[[vk::location(0)]] int vol_id;
 };
 
 GPRT_RAYGEN_PROGRAM(DPRayGen, (RayGenData, record))
@@ -62,7 +63,18 @@ GPRT_RAYGEN_PROGRAM(DPRayGen, (RayGenData, record))
     payload // the payload IO
   );
 
-  gprt::store(record.fbPtr, fbOfs, gprt::make_bgra(payload.color));
+  // generate color using volume ID
+  float3 color = normalize(float3(Random(payload.vol_id), Random(payload.vol_id + 1), Random(payload.vol_id + 1)));
+
+  if (payload.vol_id == -2) {
+    color = float3(1.0f, 1.0f, 1.0f);
+  }
+
+  if (payload.vol_id == -3) {
+    color = float3(0.0f, 0.0f, 0.0f);
+  }
+
+  gprt::store(record.fbPtr, fbOfs, color);
 }
 
 GPRT_RAYGEN_PROGRAM(SPRayGen, (RayGenData, record))
@@ -96,14 +108,24 @@ GPRT_RAYGEN_PROGRAM(SPRayGen, (RayGenData, record))
     payload // the payload IO
   );
 
-  gprt::store(record.fbPtr, fbOfs, gprt::make_bgra(payload.color));
+  float3 color = normalize(float3(Random(payload.vol_id), Random(payload.vol_id + 1), Random(payload.vol_id + 1)));
+
+  if (payload.vol_id == -2) {
+    color = float3(1.0f, 1.0f, 1.0f);
+  }
+
+  if (payload.vol_id == -3) {
+    color = float3(0.0f, 0.0f, 0.0f);
+  }
+
+  gprt::store(record.fbPtr, fbOfs, gprt::make_bgra(color));
 }
 
 GPRT_MISS_PROGRAM(miss, (MissProgData, record), (Payload, payload))
 {
   uint2 pixelID = DispatchRaysIndex().xy;
   int pattern = (pixelID.x / 8) ^ (pixelID.y/8);
-  payload.color = (pattern & 1) ? record.color1 : record.color0;
+  payload.vol_id = (pattern & 1) ? -2 : -3;
 }
 
 struct DPAttribute
@@ -134,9 +156,9 @@ GPRT_CLOSEST_HIT_PROGRAM(DPTriangle, (DPTriangleData, record), (Payload, payload
 {
   uint hit_kind = HitKind();
   if (hit_kind == HIT_KIND_TRIANGLE_FRONT_FACE)
-    payload.color = record.color_bwd;
+    payload.vol_id = record.vols[0];
   else
-    payload.color = record.color_fwd;
+    payload.vol_id = record.vols[1];
 }
 
 double3 dcross (in double3 a, in double3 b) { return double3(a.y*b.z-a.z*b.y, a.z*b.x-a.x*b.z, a.x*b.y-a.y*b.x); }
@@ -322,7 +344,7 @@ GPRT_CLOSEST_HIT_PROGRAM(SPTriangle, (SPTriangleData, record), (Payload, payload
   uint hit_kind = HitKind();
 
   if (hit_kind == HIT_KIND_TRIANGLE_FRONT_FACE)
-    payload.color = record.color_fwd;
+    payload.vol_id = record.vols[0];
   else
-    payload.color = record.color_bwd;
+    payload.vol_id = record.vols[1];
 }

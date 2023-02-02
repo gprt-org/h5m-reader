@@ -36,9 +36,8 @@ struct DPTriangleData
   /*! array/buffer of double precision rays */
   alignas(16) gprt::Buffer dpRays;
   alignas(8) int2 fbSize;
-  /*! color for these triangles */
-  alignas(16) float3 color_fwd;
-  alignas(16) float3 color_bwd;
+  /*! volume on the forward and reverse side of the surface */
+  alignas(8) int2 vols;
 };
 
 struct SPTriangleData
@@ -47,9 +46,8 @@ struct SPTriangleData
   alignas(16) gprt::Buffer index; // vec3f*
   /*! array/buffer of vertex positions */
   alignas(16) gprt::Buffer vertex; // float *
-  /*! color for these triangles */
-  alignas(16) float3 color_fwd;
-  alignas(16) float3 color_bwd;
+  /*! volume on the forward and reverse side of the surface */
+  alignas(8) int2 vols;
 };
 
 struct RayGenData
