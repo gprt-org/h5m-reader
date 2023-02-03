@@ -338,8 +338,11 @@ int main(int argc, char** argv) {
       gprtRayGenLaunch2D(context,DPRayGen,fbSize.x,fbSize.y);
     }
     float ms = gprtEndProfile(context) * 1.e-06;
-    std::cout << "RF Time: " << ms << " ms" << std::endl;
-    std::cout << "Time per ray: " << ms / (1080 * 720) << " ms" << std::endl;
+    std::string perf = "RF Time: " + std::to_string(ms) + " ms, " + 
+                       "Time per ray: " 
+                       + std::to_string(ms / ( fbSize.x * fbSize.y)) + " ms";
+
+    gprtSetWindowTitle(context, perf.c_str());
 
     // Render results to screen
     gprtBufferPresent(context, frameBuffer);
