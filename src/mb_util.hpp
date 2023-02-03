@@ -96,7 +96,7 @@ struct MBTriangleSurface {
 
     triangle_geom_s = gprtGeomCreate<T>(context, g_type);
 
-    T* geom_data = gprtGeomGetPointer(triangle_geom_s);
+    T* geom_data = gprtGeomGetParameters(triangle_geom_s);
     geom_data->vertex = gprtBufferGetHandle(vertex_buffer_s);
     geom_data->index = gprtBufferGetHandle(conn_buffer);
 
@@ -123,16 +123,15 @@ struct MBTriangleSurface {
     aabb_buffer = gprtDeviceBufferCreate<float3>(context, 2*n_tris, nullptr);
     gprtAABBsSetPositions(triangle_geom_s, aabb_buffer, n_tris, 2*sizeof(float3), 0);
 
-    T* geom_data = gprtGeomGetPointer(triangle_geom_s);
+    T* geom_data = gprtGeomGetParameters(triangle_geom_s);
     geom_data->aabbs = gprtBufferGetHandle(aabb_buffer);
 
     GPRTComputeOf<T> boundsProg = gprtComputeCreate<T>(context, module, "DPTriangle");
-    auto boundsProgData = gprtComputeGetPointer(boundsProg);
+    auto boundsProgData = gprtComputeGetParameters(boundsProg);
     boundsProgData->vertex = gprtBufferGetHandle(vertex_buffer_s);
     boundsProgData->index = gprtBufferGetHandle(conn_buffer);
     boundsProgData->aabbs = gprtBufferGetHandle(aabb_buffer);
 
-    gprtBuildPipeline(context);
     gprtBuildShaderBindingTable(context, GPRT_SBT_COMPUTE);
     gprtComputeLaunch1D(context, boundsProg, n_tris);
     aabbs_present = true;

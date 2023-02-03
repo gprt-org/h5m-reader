@@ -109,8 +109,6 @@ int main(int argc, char** argv) {
   GPRTMissOf<MissProgData> miss
     = gprtMissCreate<MissProgData>(context,module,"miss");
 
-  gprtBuildPipeline(context);
-
   // create colors for each volume
   create_volume_colors(mbi.get(), volumes);
 
@@ -168,7 +166,7 @@ int main(int argc, char** argv) {
   gprtAccelBuild(context, world);
 
   // ----------- set variables  ----------------------------
-  auto missData = gprtMissGetPointer(miss);
+  auto missData = gprtMissGetParameters(miss);
   missData->color0 = float3(0.1f, 0.1f, 0.1f);
   missData->color1 = float3(0.f, 0.f, 0.f);
 
@@ -180,16 +178,16 @@ int main(int argc, char** argv) {
   GPRTBufferOf<double> doubleRayBuffer = nullptr;
   RayGenData* rayGenData;
   if (useFloats) {
-    rayGenData = gprtRayGenGetPointer(SPRayGen);
+    rayGenData = gprtRayGenGetParameters(SPRayGen);
   }
   else {
-    rayGenData = gprtRayGenGetPointer(DPRayGen);
+    rayGenData = gprtRayGenGetParameters(DPRayGen);
     doubleRayBuffer = gprtDeviceBufferCreate<double>(context,fbSize.x*fbSize.y*8);
     rayGenData->dpRays = gprtBufferGetHandle(doubleRayBuffer);
 
 
     for (auto& ts : DPTriSurfs) {
-      auto dpGeomData = gprtGeomGetPointer(ts.triangle_geom_s);
+      auto dpGeomData = gprtGeomGetParameters(ts.triangle_geom_s);
       dpGeomData->fbSize = fbSize;
       dpGeomData->dpRays = gprtBufferGetHandle(doubleRayBuffer);
     }
@@ -198,11 +196,6 @@ int main(int argc, char** argv) {
   rayGenData->fbSize = fbSize;
   rayGenData->world = gprtAccelGetHandle(world);
 
-  // ##################################################################
-  // build *SBT* required to trace the groups
-  // ##################################################################
-
-  gprtBuildPipeline(context);
   gprtBuildShaderBindingTable(context, GPRT_SBT_ALL);
 
   // ##################################################################
@@ -382,186 +375,3 @@ int main(int argc, char** argv) {
 
   return 0;
 }
-
-
-// void render() {
-//   // ##################################################################
-//   // create a window we can use to display and interact with the image
-//   // ##################################################################
-//   if (!glfwInit())
-//     // Initialization failed
-//     throw std::runtime_error("Can't initialize GLFW");
-
-//   auto error_callback = [](int error, const char* description)
-//   {
-//     fprintf(stderr, "Error: %s\n", description);
-//   };
-//   glfwSetErrorCallback(error_callback);
-
-//   glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 2);
-//   glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 0);
-//   glfwWindowHint(GLFW_RESIZABLE, GLFW_FALSE);
-//   GLFWwindow* window = glfwCreateWindow(fbSize.x, fbSize.y,
-//     "Int02 Simple AABBs", NULL, NULL);
-//   if (!window) throw std::runtime_error("Window or OpenGL context creation failed");
-//   glfwMakeContextCurrent(window);
-
-//   // ##################################################################
-//   // now that everything is ready: launch it ....
-//   // ##################################################################
-
-//   LOG("launching ...");
-
-//   bool firstFrame = true;
-//   double xpos = 0.f, ypos = 0.f;
-//   double lastxpos, lastypos;
-//   while (!glfwWindowShouldClose(window))
-//   {
-//     float speed = .001f;
-//     lastxpos = xpos;
-//     lastypos = ypos;
-//     glfwGetCursorPos(window, &xpos, &ypos);
-//     if (firstFrame) {
-//       lastxpos = xpos;
-//       lastypos = ypos;
-//     }
-//     int state = glfwGetMouseButton(window, GLFW_MOUSE_BUTTON_LEFT);
-//     int rstate = glfwGetMouseButton(window, GLFW_MOUSE_BUTTON_RIGHT);
-
-//     int w_state = glfwGetKey(window, GLFW_KEY_W);
-//     int c_state = glfwGetKey(window, GLFW_KEY_C);
-//     int ctrl_state = glfwGetKey(window, GLFW_KEY_LEFT_CONTROL);
-
-//     // close window on Ctrl-W press
-//     if (w_state && ctrl_state) { break; }
-//     // close window on Ctrl-C press
-//     if (c_state && ctrl_state) { break; }
-
-//     // If we click the mouse, we should rotate the camera
-//     if (state == GLFW_PRESS || firstFrame)
-//     {
-//       firstFrame = false;
-//       float4 position = {lookFrom.x, lookFrom.y, lookFrom.z, 1.f};
-//       float4 pivot = {lookAt.x, lookAt.y, lookAt.z, 1.0};
-//       #define M_PI 3.1415926f
-
-//       // step 1 : Calculate the amount of rotation given the mouse movement.
-//       float deltaAngleX = (2 * M_PI / fbSize.x);
-//       float deltaAngleY = (M_PI / fbSize.y);
-//       float xAngle = (lastxpos - xpos) * deltaAngleX;
-//       float yAngle = (lastypos - ypos) * deltaAngleY;
-
-//       // step 2: Rotate the camera around the pivot point on the first axis.
-//       float4x4 rotationMatrixX = rotation_matrix(rotation_quat(lookUp, xAngle));
-//       position = (mul(rotationMatrixX, (position - pivot))) + pivot;
-
-//       // step 3: Rotate the camera around the pivot point on the second axis.
-//       float3 lookRight = cross(lookUp, normalize(pivot - position).xyz());
-//       float4x4 rotationMatrixY = rotation_matrix(rotation_quat(lookRight, yAngle));
-//       lookFrom = ((mul(rotationMatrixY, (position - pivot))) + pivot).xyz();
-
-//       // ----------- compute variable values  ------------------
-//       float3 camera_pos = lookFrom;
-//       float3 camera_d00
-//         = normalize(lookAt-lookFrom);
-//       float aspect = float(fbSize.x) / float(fbSize.y);
-//       float3 camera_ddu
-//         = cosFovy * aspect * normalize(cross(camera_d00,lookUp));
-//       float3 camera_ddv
-//         = cosFovy * normalize(cross(camera_ddu,camera_d00));
-//       camera_d00 -= 0.5f * camera_ddu;
-//       camera_d00 -= 0.5f * camera_ddv;
-
-//       // ----------- set variables  ----------------------------
-//       gprtRayGenSet3fv    (rayGen,"camera.pos",   (float*)&camera_pos);
-//       gprtRayGenSet3fv    (rayGen,"camera.dir_00",(float*)&camera_d00);
-//       gprtRayGenSet3fv    (rayGen,"camera.dir_du",(float*)&camera_ddu);
-//       gprtRayGenSet3fv    (rayGen,"camera.dir_dv",(float*)&camera_ddv);
-//       gprtBuildShaderBindingTable(context, GPRT_SBT_RAYGEN);
-//     }
-
-//     if (rstate == GLFW_PRESS) {
-//       glfwGetCursorPos(window, &xpos, &ypos);
-//       float dy = ypos - lastypos;
-
-//       float3 view_vec = lookFrom - lookAt;
-
-//       if (dy > 0.0) {
-//         view_vec.x *= 0.95;
-//         view_vec.y *= 0.95;
-//         view_vec.z *= 0.95;
-//       } else {
-//         view_vec.x *= 1.05;
-//         view_vec.y *= 1.05;
-//         view_vec.z *= 1.05;
-//       }
-
-//       lookFrom = lookAt + view_vec;
-
-//       gprtRayGenSet3fv(rayGen, "camera.pos", (float*)&lookFrom);
-//       gprtBuildShaderBindingTable(context, GPRT_SBT_RAYGEN);
-
-//     }
-
-//     // Now, trace rays
-//     gprtRayGenLaunch2D(context,rayGen,fbSize.x,fbSize.y);
-
-//     // Render results to screen
-//     void* pixels = gprtBufferGetPointer(frameBuffer);
-//     if (fbTexture == 0)
-//       glGenTextures(1, &fbTexture);
-
-//     glBindTexture(GL_TEXTURE_2D, fbTexture);
-//     GLenum texFormat = GL_RGBA;
-//     GLenum texelType = GL_UNSIGNED_BYTE;
-//     glTexImage2D(GL_TEXTURE_2D, 0, texFormat, fbSize.x, fbSize.y, 0, GL_RGBA,
-//                   texelType, pixels);
-
-//     glDisable(GL_LIGHTING);
-//     glColor3f(1, 1, 1);
-
-//     glMatrixMode(GL_MODELVIEW);
-//     glLoadIdentity();
-
-//     glEnable(GL_TEXTURE_2D);
-//     glBindTexture(GL_TEXTURE_2D, fbTexture);
-//     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
-//     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-
-//     glDisable(GL_DEPTH_TEST);
-
-//     glViewport(0, 0, fbSize.x, fbSize.y);
-
-//     glMatrixMode(GL_PROJECTION);
-//     glLoadIdentity();
-//     glOrtho(0.f, (float)fbSize.x, (float)fbSize.y, 0.f, -1.f, 1.f);
-
-//     glBegin(GL_QUADS);
-//     {
-//       glTexCoord2f(0.f, 0.f);
-//       glVertex3f(0.f, 0.f, 0.f);
-
-//       glTexCoord2f(0.f, 1.f);
-//       glVertex3f(0.f, (float)fbSize.y, 0.f);
-
-//       glTexCoord2f(1.f, 1.f);
-//       glVertex3f((float)fbSize.x, (float)fbSize.y, 0.f);
-
-//       glTexCoord2f(1.f, 0.f);
-//       glVertex3f((float)fbSize.x, 0.f, 0.f);
-//     }
-//     glEnd();
-
-//     glfwSwapBuffers(window);
-//     glfwPollEvents();
-//   }
-
-//   // ##################################################################
-//   // and finally, clean up
-//   // ##################################################################
-
-//   LOG("cleaning up ...");
-
-//   glfwDestroyWindow(window);
-//   glfwTerminate();
-// }
