@@ -24,6 +24,13 @@
 #include "gprt.h"
 #include "rng.h"
 
+float4 over(float4 a, float4 b) {
+  float4 result;
+  result.a = a.a + b.a * (1.f - a.a);
+  result.rgb = (a.rgb * a.a + b.rgb * b.a * (1.f - a.a)) / result.a;
+  return result;
+}
+
 struct Payload
 {
 [[vk::location(0)]] int vol_id;
@@ -118,7 +125,15 @@ GPRT_RAYGEN_PROGRAM(SPRayGen, (RayGenData, record))
     color = float3(0.0f, 0.0f, 0.0f);
   }
 
-  gprt::store(record.fbPtr, fbOfs, gprt::make_bgra(color));
+  // Composite on top of everything else our user interface
+  Texture2D texture = gprt::getTexture2DHandle(record.guiTexture);
+  SamplerState sampler = gprt::getDefaultSampler();
+
+  float4 guiColor = texture.SampleGrad(sampler, screen, float2(0.f, 0.f), float2(0.f, 0.f));
+
+  float4 finalColor = over(guiColor, float4(color.r, color.g, color.b, 1.f));
+
+  gprt::store(record.fbPtr, fbOfs, gprt::make_bgra(finalColor));
 }
 
 GPRT_MISS_PROGRAM(miss, (MissProgData, record), (Payload, payload))

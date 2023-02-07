@@ -55,6 +55,8 @@ struct RayGenData
   alignas(16) gprt::Buffer fbPtr;
   alignas(16) gprt::Buffer dpRays;
 
+  alignas(16) gprt::Texture guiTexture;
+
   alignas(8) int2 fbSize;
   alignas(16) gprt::Accel world;
 

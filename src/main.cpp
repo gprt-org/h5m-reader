@@ -16,6 +16,8 @@
 #include "sharedCode.h"
 #include "mb_util.hpp"
 
+#include "imgui.h"
+
 #define LOG(message)                                            \
   std::cout << GPRT_TERMINAL_BLUE;                               \
   std::cout << "#gprt.sample(main): " << message << std::endl;   \
@@ -32,7 +34,7 @@ extern GPRTProgram dbl_deviceCode;
 void render();
 
 // initial image resolution
-const int2 fbSize = {2560, 1440};
+const int2 fbSize = {1920, 1080};
 
 int main(int argc, char** argv) {
 
@@ -173,6 +175,14 @@ int main(int argc, char** argv) {
   // ----------- set raygen variables  ----------------------------
   auto frameBuffer = gprtDeviceBufferCreate<uint32_t>(context, fbSize.x*fbSize.y);
 
+  // This is new, setup GUI frame buffer. We'll rasterize the GUI to this texture, then composite the GUI on top of the
+  // rendered scene.
+  auto guiColorAttachment = gprtDeviceTextureCreate<uint32_t>(
+      context, GPRT_IMAGE_TYPE_2D, GPRT_FORMAT_R8G8B8A8_SRGB, fbSize.x, fbSize.y, 1, false, nullptr);
+  auto guiDepthAttachment = gprtDeviceTextureCreate<float>(
+      context, GPRT_IMAGE_TYPE_2D, GPRT_FORMAT_D32_SFLOAT, fbSize.x, fbSize.y, 1, false, nullptr);
+  gprtGuiSetRasterAttachments(context, guiColorAttachment, guiDepthAttachment);
+
   // need this to communicate double precision rays to intersection program
   // ray origin xyz + tmin, then ray direction xyz + tmax
   GPRTBufferOf<double> doubleRayBuffer = nullptr;
@@ -193,6 +203,7 @@ int main(int argc, char** argv) {
     }
   }
   rayGenData->fbPtr = gprtBufferGetHandle(frameBuffer);
+  rayGenData->guiTexture = gprtTextureGetHandle(guiColorAttachment);
   rayGenData->fbSize = fbSize;
   rayGenData->world = gprtAccelGetHandle(world);
 
@@ -209,6 +220,9 @@ int main(int argc, char** argv) {
   double lastxpos, lastypos;
   while (!gprtWindowShouldClose(context))
   {
+    ImGuiIO &io = ImGui::GetIO();
+    ImGui::NewFrame();
+
     float speed = .001f;
     lastxpos = xpos;
     lastypos = ypos;
@@ -235,7 +249,7 @@ int main(int argc, char** argv) {
     if (c_state && ctrl_state) { break; }
 
     // If we click the mouse, we should rotate the camera
-    if (state == GPRT_PRESS || firstFrame)
+    if (state == GPRT_PRESS && !io.WantCaptureMouse || firstFrame)
     {
       firstFrame = false;
       float4 position = {lookFrom.x, lookFrom.y, lookFrom.z, 1.f};
@@ -279,7 +293,7 @@ int main(int argc, char** argv) {
       gprtBuildShaderBindingTable(context, GPRT_SBT_RAYGEN);
     }
 
-    if (rstate == GPRT_PRESS) {
+    if (rstate == GPRT_PRESS && !io.WantCaptureMouse) {
       float3 view_vec = lookFrom - lookAt;
 
       if (dy > 0.0) {
@@ -298,7 +312,7 @@ int main(int argc, char** argv) {
       gprtBuildShaderBindingTable(context, GPRT_SBT_RAYGEN);
     }
 
-    if (mstate == GPRT_PRESS) {
+    if (mstate == GPRT_PRESS && !io.WantCaptureMouse) {
       float4 position = {lookFrom.x, lookFrom.y, lookFrom.z, 1.f};
       float4 pivot = {lookAt.x, lookAt.y, lookAt.z, 1.0};
       float3 lookRight = cross(lookUp, normalize(pivot - position).xyz());
@@ -327,6 +341,16 @@ int main(int argc, char** argv) {
       rayGenData->camera.dir_dv = camera_ddv;
       gprtBuildShaderBindingTable(context, GPRT_SBT_RAYGEN);
     }
+
+    // Set our ImGui state
+    bool show_demo_window = true;
+    if (show_demo_window)
+      ImGui::ShowDemoWindow(&show_demo_window);
+    ImGui::EndFrame();
+
+    gprtTextureClear(guiDepthAttachment);
+    gprtTextureClear(guiColorAttachment);
+    gprtGuiRasterize(context);
 
     // Now, trace rays
     gprtBeginProfile(context);
@@ -359,6 +383,8 @@ int main(int argc, char** argv) {
   // gprtBufferDestroy(indexBuffer);
   // if (aabbPositionsBuffer) gprtBufferDestroy(aabbPositionsBuffer);
   gprtBufferDestroy(frameBuffer);
+  gprtTextureDestroy(guiColorAttachment);
+  gprtTextureDestroy(guiDepthAttachment);
   // if (doubleRayBuffer) gprtBufferDestroy(doubleRayBuffer);
   if (SPRayGen) gprtRayGenDestroy(SPRayGen);
   // if (DPRayGen) gprtRayGenDestroy(DPRayGen);
