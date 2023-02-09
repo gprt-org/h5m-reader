@@ -136,6 +136,189 @@ GPRT_RAYGEN_PROGRAM(SPRayGen, (RayGenData, record))
   gprt::store(record.fbPtr, fbOfs, gprt::make_bgra(finalColor));
 }
 
+#define MAX_VOLUME_DEPTH 1000
+
+
+struct Sampler {
+  RaytracingAccelerationStructure mesh;
+
+  float operator()(float3 coordinate) {
+    Payload payload;
+    payload.vol_id = -1;
+
+    RayDesc rayDesc;
+    rayDesc.Origin = coordinate;
+    rayDesc.Direction = float3(1.f,1.f,1.f);
+    rayDesc.TMin = 0.0;
+    rayDesc.TMax = 10000.0;
+
+    TraceRay(
+      mesh, // the tree
+      RAY_FLAG_NONE, // ray flags
+      0xff, // instance inclusion mask
+      0, // ray type
+      1, // number of ray types
+      0, // miss type
+      rayDesc, // the ray to trace
+      payload // the payload IO
+    );
+
+    return float(payload.vol_id);
+  }
+};
+
+GPRT_RAYGEN_PROGRAM(SPVolVis, (RayGenData, record))
+{
+  Payload payload;
+  uint2 pixelID = DispatchRaysIndex().xy;
+  uint2 centerID = DispatchRaysDimensions().xy / 2;
+  float2 screen = (float2(pixelID) +
+                  float2(.5f, .5f)) / float2(record.fbSize);
+  const int fbOfs = pixelID.x + record.fbSize.x * pixelID.y;
+
+  int frameId = record.frameID; // todo, change per frame
+  LCGRand rng = get_rng(frameId, DispatchRaysIndex().xy, DispatchRaysDimensions().xy);
+
+  RayDesc rayDesc;
+  rayDesc.Origin = record.camera.pos;
+  rayDesc.Direction =
+    normalize(record.camera.dir_00
+    + screen.x * record.camera.dir_du
+    + screen.y * record.camera.dir_dv
+  );
+  rayDesc.TMin = 0.0;
+  rayDesc.TMax = 10000.0;
+
+  // typical ray AABB intersection test
+  float3 dirfrac;    // direction is unit direction vector of ray
+  dirfrac.x = 1.0f / rayDesc.Direction.x;
+  dirfrac.y = 1.0f / rayDesc.Direction.y;
+  dirfrac.z = 1.0f / rayDesc.Direction.z;    
+  // lb is the corner of AABB with minimal coordinates - left bottom, rt is maximal corner
+  // origin is origin of ray
+  float3 rt = record.aabbMax;
+  float t2 = (rt.x - rayDesc.Origin.x)*dirfrac.x;
+  float t4 = (rt.y - rayDesc.Origin.y)*dirfrac.y;
+  float t6 = (rt.z - rayDesc.Origin.z)*dirfrac.z;    
+  float3 lb = record.aabbMin;
+  float t1 = (lb.x - rayDesc.Origin.x)*dirfrac.x;
+  float t3 = (lb.y - rayDesc.Origin.y)*dirfrac.y;
+  float t5 = (lb.z - rayDesc.Origin.z)*dirfrac.z;    
+  float thit0 = max(max(min(t1, t2), min(t3, t4)), min(t5, t6));
+  float thit1 = min(min(max(t1, t2), max(t3, t4)), max(t5, t6));    // clip hit to near position
+  // thit0 = max(thit0, rayDesc.TMin);
+  // thit1 = min(thit1, rayDesc.TMax);    
+  // if tmax < 0, ray (line) is intersecting AABB, but the whole AABB is behind us
+  bool hit = true;
+  if (thit1 < 0) { hit = false; }    
+  // if tmin > tmax, ray doesn't intersect AABB
+  if (thit0 >= thit1) { hit = false; }
+
+  Sampler meshSampler;
+  meshSampler.mesh = gprt::getAccelHandle(record.world);
+
+  float4 color = float4(0.f, 0.f, 0.f, 1.f);
+  if (hit) {
+    // float t = .001f;
+    // float absorbance = 1.f - exp(-(thit1 - thit0) * t);
+
+    // if (all(pixelID == centerID)) {
+    // // printf("aabb %f %f %f aabbmax %f %f %f \n", record.aabbMin.x, record.aabbMin.y, record.aabbMin.z, record.aabbMax.x, record.aabbMax.y, record.aabbMax.z);
+
+    // // printf("t1 %f t2 %f t3 %f t4 %f t5 %f t6 %f \n", t1, t2, t3, t4, t5, t6);
+    // // printf("thit0 %f thit1 %f\n", thit0, thit1);
+    //   printf("dist %f t %f\n", thit1 - thit0, absorbance);
+    // }
+
+    // color = float4(1.f, 0.f, 0.f, 1.f) * absorbance;
+
+    float unit = record.unit;
+    float majorantExtinction = 1.f; // todo, DDA or something similar
+    float t = thit0;
+    uint32_t numVolumes = record.numVolumes;
+
+    Texture1D colormap = gprt::getTexture1DHandle(record.colormap);
+    SamplerState sampler = gprt::getDefaultSampler();
+
+    // while (true) {
+    for (int i = 0; i < MAX_VOLUME_DEPTH; ++i) {
+      
+      // Sample a distance
+      t = t - (log(1.0f - lcg_randomf(rng)) / majorantExtinction) * unit; 
+      
+      // A boundary has been hit
+      if (t >= thit1) break;
+
+      // Update current position
+      float3 x = rayDesc.Origin + t * rayDesc.Direction;
+
+      // Sample heterogeneous media
+      float dataValue = meshSampler(x); 
+      
+      float4 xf = float4(0.f, 0.f, 0.f, 0.f);
+      if (dataValue != -1.f) {
+        dataValue = dataValue / float(numVolumes);
+        xf = colormap.SampleGrad(sampler, dataValue, 0.f, 0.f);
+        
+      //   float remapped1 = (dataValue - volDomain.lower) / (volDomain.upper - volDomain.lower);
+      //   float remapped2 = (remapped1 - xfDomain.lower) / (xfDomain.upper - xfDomain.lower);
+      //   xf = tex2D<float4>(lp.transferFunc.texture,remapped2,0.5f);
+      //   xf.w *= lp.transferFunc.opacityScale;
+      }
+
+      // Check if an emission occurred
+      if (lcg_randomf(rng) < xf.w / (majorantExtinction)) {
+      //   prd.tHit = min(prd.tHit, t);
+      //   prd.rgba = vec4f(vec3f(xf), 1.f);
+        color = float4(xf.rgb, 1.f);
+        break;
+      }
+    }
+    
+  
+    // RaytracingAccelerationStructure world = gprt::getAccelHandle(record.world);
+
+    // TraceRay(
+    //   world, // the tree
+    //   RAY_FLAG_CULL_BACK_FACING_TRIANGLES, // ray flags
+    //   0xff, // instance inclusion mask
+    //   0, // ray type
+    //   1, // number of ray types
+    //   0, // miss type
+    //   rayDesc, // the ray to trace
+    //   payload // the payload IO
+    // );
+
+    // float3 color = normalize(float3(Random(payload.vol_id), Random(payload.vol_id + 1), Random(payload.vol_id + 1)));
+
+    // if (payload.vol_id == -2) {
+    //   color = float3(1.0f, 1.0f, 1.0f);
+    // }
+
+    // if (payload.vol_id == -3) {
+    //   color = float3(0.0f, 0.0f, 0.0f);
+    // }
+
+  }
+
+
+  // Texture1D colormap = gprt::getTexture1DHandle(record.colormap);
+  // SamplerState sampler = gprt::getDefaultSampler();
+
+  // color = colormap.SampleGrad(sampler, float(pixelID.x) / float(DispatchRaysDimensions().x), 0.f, 0.f);
+
+  float4 prevColor = gprt::load<float4>(record.accumPtr, fbOfs);
+  float4 finalColor = (1.f / float(frameId)) * color + (float(frameId - 1) / float(frameId)) * prevColor;
+  gprt::store<float4>(record.accumPtr, fbOfs, finalColor);
+
+  // Composite on top of everything else our user interface
+  Texture2D texture = gprt::getTexture2DHandle(record.guiTexture);
+  SamplerState sampler = gprt::getDefaultSampler();
+  float4 guiColor = texture.SampleGrad(sampler, screen, float2(0.f, 0.f), float2(0.f, 0.f));
+  finalColor = over(guiColor, float4(finalColor.r, finalColor.g, finalColor.b, finalColor.a));
+  gprt::store(record.fbPtr, fbOfs, gprt::make_bgra(finalColor));
+}
+
 GPRT_MISS_PROGRAM(miss, (MissProgData, record), (Payload, payload))
 {
   uint2 pixelID = DispatchRaysIndex().xy;

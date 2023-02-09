@@ -17,6 +17,7 @@
 #include "mb_util.hpp"
 
 #include "imgui.h"
+#include <imgui_gradient/imgui_gradient.hpp>
 
 #define LOG(message)                                            \
   std::cout << GPRT_TERMINAL_BLUE;                               \
@@ -80,7 +81,7 @@ int main(int argc, char** argv) {
   if (args.is_used("--volumes")) volumes = args.get<std::vector<int>>("volumes");
 
   // start up GPRT
-  gprtRequestWindow(fbSize.x, fbSize.y, "S01 Single Triangle");
+  gprtRequestWindow(fbSize.x, fbSize.y, "H5M");
   GPRTContext context = gprtContextCreate(nullptr, 1);
   GPRTModule module = gprtModuleCreate(context, dbl_deviceCode);
   // -------------------------------------------------------
@@ -105,7 +106,9 @@ int main(int argc, char** argv) {
 
   // For launching single precision rays
   GPRTRayGenOf<RayGenData> SPRayGen = nullptr;
+  GPRTRayGenOf<RayGenData> SPVolVis = nullptr;
   if (useFloats) SPRayGen = gprtRayGenCreate<RayGenData>(context, module, "SPRayGen");
+  if (useFloats) SPVolVis = gprtRayGenCreate<RayGenData>(context, module, "SPVolVis");
 
   // What to do if a ray misses
   GPRTMissOf<MissProgData> miss
@@ -125,6 +128,7 @@ int main(int argc, char** argv) {
   std::vector<GPRTGeomOf<DPTriangleData>> DPgeoms;
 
   GPRTAccel blas;
+  uint32_t numVols = 1000; // I don't know how to get this yet...
 
   if (useFloats) {
     SPTriSurfs = setup_surfaces<SPTriangleSurface, SPTriangleData>(context, mbi.get(), SPTriangleType);
@@ -174,6 +178,7 @@ int main(int argc, char** argv) {
 
   // ----------- set raygen variables  ----------------------------
   auto frameBuffer = gprtDeviceBufferCreate<uint32_t>(context, fbSize.x*fbSize.y);
+  auto accumBuffer = gprtDeviceBufferCreate<float4>(context, fbSize.x*fbSize.y);
 
   // This is new, setup GUI frame buffer. We'll rasterize the GUI to this texture, then composite the GUI on top of the
   // rendered scene.
@@ -183,12 +188,19 @@ int main(int argc, char** argv) {
       context, GPRT_IMAGE_TYPE_2D, GPRT_FORMAT_D32_SFLOAT, fbSize.x, fbSize.y, 1, false, nullptr);
   gprtGuiSetRasterAttachments(context, guiColorAttachment, guiDepthAttachment);
 
+  // Colormap for visualization
+  auto colormap = gprtDeviceTextureCreate<uint32_t>(
+    context, GPRT_IMAGE_TYPE_1D, GPRT_FORMAT_R8G8B8A8_SRGB, 256, 1, 1, false, nullptr
+  );
+
   // need this to communicate double precision rays to intersection program
   // ray origin xyz + tmin, then ray direction xyz + tmax
   GPRTBufferOf<double> doubleRayBuffer = nullptr;
-  RayGenData* rayGenData;
+  RayGenData* rayGenData = nullptr;
+  RayGenData* volVisData = nullptr;
   if (useFloats) {
     rayGenData = gprtRayGenGetParameters(SPRayGen);
+    volVisData = gprtRayGenGetParameters(SPVolVis);
   }
   else {
     rayGenData = gprtRayGenGetParameters(DPRayGen);
@@ -203,9 +215,18 @@ int main(int argc, char** argv) {
     }
   }
   rayGenData->fbPtr = gprtBufferGetHandle(frameBuffer);
+  rayGenData->accumPtr = gprtBufferGetHandle(accumBuffer);  
   rayGenData->guiTexture = gprtTextureGetHandle(guiColorAttachment);
   rayGenData->fbSize = fbSize;
   rayGenData->world = gprtAccelGetHandle(world);
+  rayGenData->aabbMin = float3(bbox.first.x, bbox.first.y, bbox.first.z);
+  rayGenData->aabbMax = float3(bbox.second.x, bbox.second.y, bbox.second.z);
+  rayGenData->unit = 1000.f;
+  rayGenData->colormap = gprtTextureGetHandle(colormap);
+  rayGenData->numVolumes = numVols;
+  rayGenData->frameID = 0;
+
+  if (volVisData) *volVisData = *rayGenData;
 
   gprtBuildShaderBindingTable(context, GPRT_SBT_ALL);
 
@@ -215,6 +236,8 @@ int main(int argc, char** argv) {
 
   LOG("launching ...");
 
+  ImGG::GradientWidget gradient_widget{};
+  
   bool firstFrame = true;
   double xpos = 0.f, ypos = 0.f;
   double lastxpos, lastypos;
@@ -222,6 +245,36 @@ int main(int argc, char** argv) {
   {
     ImGuiIO &io = ImGui::GetIO();
     ImGui::NewFrame();
+
+    rayGenData->frameID++;
+
+    if (gradient_widget.widget("My Gradient") || firstFrame) {
+      auto make_8bit = [](const float f) -> uint32_t {
+        return std::min(255, std::max(0, int(f * 256.f)));
+      };
+
+      auto make_rgba = [make_8bit](float4 color) -> uint32_t {
+        float gamma = 2.2;
+        color = pow(color, float4(1.0f / gamma, 1.0f / gamma, 1.0f / gamma, 1.0f));
+        return (make_8bit(color.x) << 0) + (make_8bit(color.y) << 8) + (make_8bit(color.z) << 16) + (make_8bit(color.w) << 24);
+      };
+
+      gprtTextureMap(colormap);
+      uint32_t *ptr = gprtTextureGetPointer(colormap);
+      for (uint32_t i = 0; i < 256; ++i) {
+        auto result = gradient_widget.gradient().at(ImGG::RelativePosition(float(i + 1) / 256.f));
+        ptr[i] = make_rgba(float4(result.x, result.y, result.z, result.w));
+      }
+      gprtTextureUnmap(colormap);
+      rayGenData->frameID = 1;
+    }
+
+    static float unit = 1000.f;
+    if (ImGui::SliderFloat("unit", &unit, 1., 1000.f)) { 
+      rayGenData->unit = unit;
+      if (volVisData) *volVisData = *rayGenData;
+      rayGenData->frameID = 1;
+    }
 
     float speed = .001f;
     lastxpos = xpos;
@@ -290,7 +343,8 @@ int main(int argc, char** argv) {
       rayGenData->camera.dir_00 = camera_d00;
       rayGenData->camera.dir_du = camera_ddu;
       rayGenData->camera.dir_dv = camera_ddv;
-      gprtBuildShaderBindingTable(context, GPRT_SBT_RAYGEN);
+
+      rayGenData->frameID = 1;
     }
 
     if (rstate == GPRT_PRESS && !io.WantCaptureMouse) {
@@ -309,7 +363,9 @@ int main(int argc, char** argv) {
       lookFrom = lookAt + view_vec;
 
       rayGenData->camera.pos = lookFrom;
-      gprtBuildShaderBindingTable(context, GPRT_SBT_RAYGEN);
+
+      rayGenData->frameID = 1;
+
     }
 
     if (mstate == GPRT_PRESS && !io.WantCaptureMouse) {
@@ -339,13 +395,21 @@ int main(int argc, char** argv) {
       rayGenData->camera.dir_00 = camera_d00;
       rayGenData->camera.dir_du = camera_ddu;
       rayGenData->camera.dir_dv = camera_ddv;
-      gprtBuildShaderBindingTable(context, GPRT_SBT_RAYGEN);
+
+      rayGenData->frameID = 1;
     }
 
+    if (volVisData) *volVisData = *rayGenData;
+    gprtBuildShaderBindingTable(context, GPRT_SBT_RAYGEN);
+
     // Set our ImGui state
-    bool show_demo_window = true;
-    if (show_demo_window)
-      ImGui::ShowDemoWindow(&show_demo_window);
+    // bool show_demo_window = true;
+    // if (show_demo_window)
+    //   ImGui::ShowDemoWindow(&show_demo_window);
+
+    static int choice = 0;
+    ImGui::RadioButton("Show Surfaces", &choice, 0);
+    ImGui::RadioButton("Show Volumes", &choice, 1);
     ImGui::EndFrame();
 
     gprtTextureClear(guiDepthAttachment);
@@ -356,7 +420,13 @@ int main(int argc, char** argv) {
     gprtBeginProfile(context);
 
     if (useFloats) {
-      gprtRayGenLaunch2D(context,SPRayGen,fbSize.x,fbSize.y);
+
+      if (choice == 0) {
+        gprtRayGenLaunch2D(context,SPRayGen,fbSize.x,fbSize.y);
+      }
+      else if (choice == 1) {
+        gprtRayGenLaunch2D(context,SPVolVis,fbSize.x,fbSize.y);
+      }
     }
     else  {
       gprtRayGenLaunch2D(context,DPRayGen,fbSize.x,fbSize.y);
@@ -387,6 +457,8 @@ int main(int argc, char** argv) {
   gprtTextureDestroy(guiDepthAttachment);
   // if (doubleRayBuffer) gprtBufferDestroy(doubleRayBuffer);
   if (SPRayGen) gprtRayGenDestroy(SPRayGen);
+  if (SPVolVis) gprtRayGenDestroy(SPVolVis);
+  if (DPRayGen) gprtRayGenDestroy(DPRayGen);
   // if (DPRayGen) gprtRayGenDestroy(DPRayGen);
   gprtMissDestroy(miss);
   gprtAccelDestroy(blas);

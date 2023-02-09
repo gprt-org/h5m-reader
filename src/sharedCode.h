@@ -52,13 +52,25 @@ struct SPTriangleData
 
 struct RayGenData
 {
+  alignas(16) gprt::Buffer accumPtr;
   alignas(16) gprt::Buffer fbPtr;
   alignas(16) gprt::Buffer dpRays;
 
   alignas(16) gprt::Texture guiTexture;
 
+  // a relative unit for delta tracking, similar to "dt"
+  alignas(4) float unit; 
+  alignas(4) uint32_t frameID; 
+  alignas(4) uint32_t numVolumes;
+
+  // colormap for visualization
+  alignas(16) gprt::Texture colormap;
+
   alignas(8) int2 fbSize;
   alignas(16) gprt::Accel world;
+
+  alignas(16) float3 aabbMin;
+  alignas(16) float3 aabbMax;
 
   struct {
     alignas(16) float3 pos;

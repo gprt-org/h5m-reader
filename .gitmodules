@@ -4,3 +4,6 @@
 [submodule "3rdParty/gprt"]
 	path = 3rdParty/gprt
 	url = https://github.com/general-purpose-raytracing-toolkit/gprt
+[submodule "3rdParty/imgui_gradient"]
+	path = 3rdParty/imgui_gradient
+	url = git@github.com:natevm/imgui_gradient.git

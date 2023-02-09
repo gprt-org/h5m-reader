@@ -17,6 +17,9 @@ endif()
 add_subdirectory(3rdParty/argparse)
 add_subdirectory(3rdParty/gprt)
 
+add_subdirectory(3rdParty/imgui_gradient)
+target_include_directories(imgui_gradient PRIVATE 3rdParty/gprt/3rdParty/)
+
 find_package(MOAB REQUIRED PATH_SUFFIXES lib lib/cmake)
 
 embed_devicecode(
@@ -28,5 +31,5 @@ embed_devicecode(
 
 add_executable(gprt-h5m src/main.cpp src/MOABDirectAccess.cpp)
 target_compile_features(gprt-h5m PUBLIC cxx_std_14)
-target_include_directories(gprt-h5m PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
-target_link_libraries(gprt-h5m PUBLIC dbl_deviceCode argparse MOAB gprt::gprt glfw ${OPENGL_gl_LIBRARY})
+target_include_directories(gprt-h5m PUBLIC ${CMAKE_CURRENT_SOURCE_DIR} 3rdParty/gprt/3rdParty/)
+target_link_libraries(gprt-h5m PUBLIC dbl_deviceCode argparse MOAB gprt::gprt glfw ${OPENGL_gl_LIBRARY} imgui_gradient::imgui_gradient)
