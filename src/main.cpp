@@ -80,8 +80,14 @@ int main(int argc, char** argv) {
   rval = dag->load_file(filename.c_str());
   MOAB_CHECK_ERROR(rval);
 
-  rval = dag->remove_graveyard();
-  MOAB_CHECK_ERROR(rval);
+  if (dag->has_graveyard()) {
+    std::cout << "Found graveyard. Building implicit complement and removing..." << std::endl;
+    rval = dag->setup_impl_compl();
+    MOAB_CHECK_ERROR(rval);
+    rval = dag->remove_graveyard();
+    MOAB_CHECK_ERROR(rval);
+    std::cout << "Done" << std::endl;
+  }
 
   std::vector<int> volumes;
   if (args.is_used("--volumes")) volumes = args.get<std::vector<int>>("volumes");
@@ -221,7 +227,7 @@ int main(int argc, char** argv) {
     }
   }
   rayGenData->fbPtr = gprtBufferGetHandle(frameBuffer);
-  rayGenData->accumPtr = gprtBufferGetHandle(accumBuffer);  
+  rayGenData->accumPtr = gprtBufferGetHandle(accumBuffer);
   rayGenData->guiTexture = gprtTextureGetHandle(guiColorAttachment);
   rayGenData->fbSize = fbSize;
   rayGenData->world = gprtAccelGetHandle(world);
@@ -243,7 +249,7 @@ int main(int argc, char** argv) {
   LOG("launching ...");
 
   ImGG::GradientWidget gradient_widget{};
-  
+
   bool firstFrame = true;
   double xpos = 0.f, ypos = 0.f;
   double lastxpos, lastypos;
@@ -276,7 +282,7 @@ int main(int argc, char** argv) {
     }
 
     static float unit = 1000.f;
-    if (ImGui::SliderFloat("unit", &unit, 1., 1000.f)) { 
+    if (ImGui::SliderFloat("unit", &unit, 1., 1000.f)) {
       rayGenData->unit = unit;
       if (volVisData) *volVisData = *rayGenData;
       rayGenData->frameID = 1;
@@ -438,8 +444,8 @@ int main(int argc, char** argv) {
       gprtRayGenLaunch2D(context,DPRayGen,fbSize.x,fbSize.y);
     }
     float ms = gprtEndProfile(context) * 1.e-06;
-    std::string perf = "RF Time: " + std::to_string(ms) + " ms, " + 
-                       "Time per ray: " 
+    std::string perf = "RF Time: " + std::to_string(ms) + " ms, " +
+                       "Time per ray: "
                        + std::to_string(ms / ( fbSize.x * fbSize.y)) + " ms";
 
     gprtSetWindowTitle(context, perf.c_str());
