@@ -8,6 +8,7 @@
 
 #include "argparse/argparse.hpp"
 
+#include "DagMC.hpp"
 #include "moab/Core.hpp"
 #include "moab/Range.hpp"
 
@@ -70,11 +71,16 @@ int main(int argc, char** argv) {
     std::exit(1);
   }
 
-  std::shared_ptr<moab::Core> mbi = std::make_shared<moab::Core>();
   moab::ErrorCode rval;
+  std::shared_ptr<moab::DagMC> dag = std::make_shared<moab::DagMC>();
+
+  auto mbi = dag->moab_instance_sptr();
 
   std::cout << "Loading " << filename << "..." << std::endl;
-  rval = mbi->load_file(filename.c_str());
+  rval = dag->load_file(filename.c_str());
+  MOAB_CHECK_ERROR(rval);
+
+  rval = dag->remove_graveyard();
   MOAB_CHECK_ERROR(rval);
 
   std::vector<int> volumes;
