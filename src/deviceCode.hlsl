@@ -241,6 +241,7 @@ GPRT_RAYGEN_PROGRAM(SPVolVis, (RayGenData, record))
     float majorantExtinction = 1.f; // todo, DDA or something similar
     float t = thit0;
     uint32_t numVolumes = record.numVolumes;
+    uint32_t maxVolID = record.maxVolID;
 
     Texture1D colormap = gprt::getTexture1DHandle(record.colormap);
     SamplerState sampler = gprt::getDefaultSampler();
@@ -262,7 +263,7 @@ GPRT_RAYGEN_PROGRAM(SPVolVis, (RayGenData, record))
 
       float4 xf = float4(0.f, 0.f, 0.f, 0.f);
       if (dataValue != -1.f) {
-        dataValue = dataValue / float(numVolumes);
+        dataValue = dataValue / float(maxVolID);
         xf = colormap.SampleGrad(sampler, dataValue, 0.f, 0.f);
 
       //   float remapped1 = (dataValue - volDomain.lower) / (volDomain.upper - volDomain.lower);
