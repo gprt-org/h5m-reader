@@ -174,6 +174,7 @@ struct Sampler {
 GPRT_RAYGEN_PROGRAM(SPVolVis, (RayGenData, record))
 {
   Payload payload;
+  payload.vol_id = -1;
   uint2 pixelID = DispatchRaysIndex().xy;
   uint2 centerID = DispatchRaysDimensions().xy / 2;
   float2 screen = (float2(pixelID) +
