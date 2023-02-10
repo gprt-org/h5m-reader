@@ -39,6 +39,8 @@ struct Payload
 GPRT_RAYGEN_PROGRAM(DPRayGen, (RayGenData, record))
 {
   Payload payload;
+  payload.vol_id = -1;
+
   uint2 pixelID = DispatchRaysIndex().xy;
   float2 screen = (float2(pixelID) +
                   float2(.5f, .5f)) / float2(record.fbSize);
@@ -87,6 +89,8 @@ GPRT_RAYGEN_PROGRAM(DPRayGen, (RayGenData, record))
 GPRT_RAYGEN_PROGRAM(SPRayGen, (RayGenData, record))
 {
   Payload payload;
+  payload.vol_id = -1;
+
   uint2 pixelID = DispatchRaysIndex().xy;
   float2 screen = (float2(pixelID) +
                   float2(.5f, .5f)) / float2(record.fbSize);
@@ -193,24 +197,24 @@ GPRT_RAYGEN_PROGRAM(SPVolVis, (RayGenData, record))
   float3 dirfrac;    // direction is unit direction vector of ray
   dirfrac.x = 1.0f / rayDesc.Direction.x;
   dirfrac.y = 1.0f / rayDesc.Direction.y;
-  dirfrac.z = 1.0f / rayDesc.Direction.z;    
+  dirfrac.z = 1.0f / rayDesc.Direction.z;
   // lb is the corner of AABB with minimal coordinates - left bottom, rt is maximal corner
   // origin is origin of ray
   float3 rt = record.aabbMax;
   float t2 = (rt.x - rayDesc.Origin.x)*dirfrac.x;
   float t4 = (rt.y - rayDesc.Origin.y)*dirfrac.y;
-  float t6 = (rt.z - rayDesc.Origin.z)*dirfrac.z;    
+  float t6 = (rt.z - rayDesc.Origin.z)*dirfrac.z;
   float3 lb = record.aabbMin;
   float t1 = (lb.x - rayDesc.Origin.x)*dirfrac.x;
   float t3 = (lb.y - rayDesc.Origin.y)*dirfrac.y;
-  float t5 = (lb.z - rayDesc.Origin.z)*dirfrac.z;    
+  float t5 = (lb.z - rayDesc.Origin.z)*dirfrac.z;
   float thit0 = max(max(min(t1, t2), min(t3, t4)), min(t5, t6));
   float thit1 = min(min(max(t1, t2), max(t3, t4)), max(t5, t6));    // clip hit to near position
   // thit0 = max(thit0, rayDesc.TMin);
-  // thit1 = min(thit1, rayDesc.TMax);    
+  // thit1 = min(thit1, rayDesc.TMax);
   // if tmax < 0, ray (line) is intersecting AABB, but the whole AABB is behind us
   bool hit = true;
-  if (thit1 < 0) { hit = false; }    
+  if (thit1 < 0) { hit = false; }
   // if tmin > tmax, ray doesn't intersect AABB
   if (thit0 >= thit1) { hit = false; }
 
@@ -242,10 +246,10 @@ GPRT_RAYGEN_PROGRAM(SPVolVis, (RayGenData, record))
 
     // while (true) {
     for (int i = 0; i < MAX_VOLUME_DEPTH; ++i) {
-      
+
       // Sample a distance
-      t = t - (log(1.0f - lcg_randomf(rng)) / majorantExtinction) * unit; 
-      
+      t = t - (log(1.0f - lcg_randomf(rng)) / majorantExtinction) * unit;
+
       // A boundary has been hit
       if (t >= thit1) break;
 
@@ -253,13 +257,13 @@ GPRT_RAYGEN_PROGRAM(SPVolVis, (RayGenData, record))
       float3 x = rayDesc.Origin + t * rayDesc.Direction;
 
       // Sample heterogeneous media
-      float dataValue = meshSampler(x); 
-      
+      float dataValue = meshSampler(x);
+
       float4 xf = float4(0.f, 0.f, 0.f, 0.f);
       if (dataValue != -1.f) {
         dataValue = dataValue / float(numVolumes);
         xf = colormap.SampleGrad(sampler, dataValue, 0.f, 0.f);
-        
+
       //   float remapped1 = (dataValue - volDomain.lower) / (volDomain.upper - volDomain.lower);
       //   float remapped2 = (remapped1 - xfDomain.lower) / (xfDomain.upper - xfDomain.lower);
       //   xf = tex2D<float4>(lp.transferFunc.texture,remapped2,0.5f);
@@ -274,8 +278,8 @@ GPRT_RAYGEN_PROGRAM(SPVolVis, (RayGenData, record))
         break;
       }
     }
-    
-  
+
+
     // RaytracingAccelerationStructure world = gprt::getAccelHandle(record.world);
 
     // TraceRay(

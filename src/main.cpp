@@ -89,6 +89,10 @@ int main(int argc, char** argv) {
     std::cout << "Done" << std::endl;
   }
 
+  rval = dag->setup_impl_compl();
+  MOAB_CHECK_ERROR(rval);
+
+
   std::vector<int> volumes;
   if (args.is_used("--volumes")) volumes = args.get<std::vector<int>>("volumes");
 
@@ -140,7 +144,7 @@ int main(int argc, char** argv) {
   std::vector<GPRTGeomOf<DPTriangleData>> DPgeoms;
 
   GPRTAccel blas;
-  uint32_t numVols = 1000; // I don't know how to get this yet...
+  uint32_t numVols = dag->num_entities(3); // I don't know how to get this yet...
 
   if (useFloats) {
     SPTriSurfs = setup_surfaces<SPTriangleSurface, SPTriangleData>(context, mbi.get(), SPTriangleType);
