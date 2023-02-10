@@ -59,10 +59,10 @@ struct RayGenData
   alignas(16) gprt::Texture guiTexture;
 
   // a relative unit for delta tracking, similar to "dt"
-  alignas(4) float unit; 
-  alignas(4) uint32_t frameID; 
+  alignas(4) float unit;
+  alignas(4) uint32_t frameID;
   alignas(4) uint32_t numVolumes;
-
+  alignas(4) uint32_t maxVolID;
   // colormap for visualization
   alignas(16) gprt::Texture colormap;
 

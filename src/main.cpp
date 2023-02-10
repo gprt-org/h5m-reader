@@ -5,7 +5,6 @@
 #include <vector>
 #include <string>
 
-
 #include "argparse/argparse.hpp"
 
 #include "DagMC.hpp"
@@ -146,6 +145,11 @@ int main(int argc, char** argv) {
   GPRTAccel blas;
   uint32_t numVols = dag->num_entities(3); // I don't know how to get this yet...
 
+  int max_vol_id = 0;
+  for (int i = 0; i < numVols; i++) {
+    max_vol_id = std::max(max_vol_id, dag->id_by_index(3, i));
+  }
+
   if (useFloats) {
     SPTriSurfs = setup_surfaces<SPTriangleSurface, SPTriangleData>(context, mbi.get(), SPTriangleType);
     for (auto& ts : SPTriSurfs) {
@@ -240,6 +244,7 @@ int main(int argc, char** argv) {
   rayGenData->unit = 1000.f;
   rayGenData->colormap = gprtTextureGetHandle(colormap);
   rayGenData->numVolumes = numVols;
+  rayGenData->maxVolID = max_vol_id;
   rayGenData->frameID = 0;
 
   if (volVisData) *volVisData = *rayGenData;
