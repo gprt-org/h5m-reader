@@ -79,6 +79,9 @@ int main(int argc, char** argv) {
   rval = dag->load_file(filename.c_str());
   MOAB_CHECK_ERROR(rval);
 
+  rval = dag->setup_indices();
+  MOAB_CHECK_ERROR(rval);
+
   if (dag->has_graveyard()) {
     std::cout << "Found graveyard. Building implicit complement and removing..." << std::endl;
     rval = dag->setup_impl_compl();

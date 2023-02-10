@@ -110,7 +110,7 @@ GPRT_RAYGEN_PROGRAM(SPRayGen, (RayGenData, record))
 
   TraceRay(
     world, // the tree
-    RAY_FLAG_CULL_BACK_FACING_TRIANGLES, // ray flags
+    RAY_FLAG_NONE, // RAY_FLAG_CULL_BACK_FACING_TRIANGLES, // ray flags
     0xff, // instance inclusion mask
     0, // ray type
     1, // number of ray types
