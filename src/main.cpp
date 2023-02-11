@@ -82,18 +82,38 @@ int main(int argc, char** argv) {
   rval = dag->setup_indices();
   MOAB_CHECK_ERROR(rval);
 
-  if (dag->has_graveyard()) {
-    std::cout << "Found graveyard. Building implicit complement and removing..." << std::endl;
-    rval = dag->setup_impl_compl();
-    MOAB_CHECK_ERROR(rval);
-    rval = dag->remove_graveyard();
-    MOAB_CHECK_ERROR(rval);
-    std::cout << "Done" << std::endl;
-  }
-
   rval = dag->setup_impl_compl();
   MOAB_CHECK_ERROR(rval);
 
+  // always create graveyard, overwriting the current graveyard if present
+  if ( !dag->has_graveyard() ) {
+    rval = dag->create_graveyard(true);
+    MOAB_CHECK_ERROR(rval);
+  }
+
+  // get the graveyard group
+  EntityHandle graveyard_group;
+  rval = dag->get_graveyard_group(graveyard_group);
+  MOAB_CHECK_ERROR(rval);
+
+  // get the entity handle of the graveyard volume
+  Range graveyard_vols;
+  rval = mbi->get_entities_by_handle(graveyard_group, graveyard_vols);
+  MOAB_CHECK_ERROR(rval);
+
+  // should be one graveyard vol
+  if (graveyard_vols.size() != 1) {
+    std::cout << "ERROR: More than one graveyard volume is present" << std::endl;
+    std::exit(1);
+  }
+
+  int graveyard_id = dag->get_entity_id(graveyard_vols[0]);
+
+  EntityHandle implicit_complement;
+  rval = dag->geom_tool()->get_implicit_complement(implicit_complement);
+  MOAB_CHECK_ERROR(rval);
+
+  int implicit_complement_id = dag->get_entity_id(implicit_complement);
 
   std::vector<int> volumes;
   if (args.is_used("--volumes")) volumes = args.get<std::vector<int>>("volumes");
