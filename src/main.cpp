@@ -174,7 +174,7 @@ int main(int argc, char** argv) {
   }
 
   if (useFloats) {
-    SPTriSurfs = setup_surfaces<SPTriangleSurface, SPTriangleData>(context, mbi.get(), SPTriangleType);
+    SPTriSurfs = setup_surfaces<SPTriangleSurface, SPTriangleData>(context, dag, SPTriangleType);
     for (auto& ts : SPTriSurfs) {
       ts.set_buffers();
       SPgeoms.push_back(ts.triangle_geom_s);
@@ -182,7 +182,7 @@ int main(int argc, char** argv) {
     blas = gprtTrianglesAccelCreate(context, SPgeoms.size(), SPgeoms.data());
     gprtAccelBuild(context, blas);
   } else {
-    DPTriSurfs = setup_surfaces<DPTriangleSurface, DPTriangleData>(context, mbi.get(), DPTriangleType);
+    DPTriSurfs = setup_surfaces<DPTriangleSurface, DPTriangleData>(context, dag, DPTriangleType);
 
     for (auto& ts : DPTriSurfs) ts.aabbs(context, module);
 

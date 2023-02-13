@@ -35,7 +35,7 @@ struct MBTriangleSurface {
     std::vector<uint3> connectivity;
   };
 
-  MBTriangleSurface(GPRTContext context, moab::Interface* mbi, GPRTGeomTypeOf<T> g_type, int surface_id) {
+  MBTriangleSurface(GPRTContext context, moab::Interface* mbi, GPRTGeomTypeOf<T> g_type, int surface_id, int vol_id=-1) {
     ErrorCode rval;
 
     // get this surface's handle
@@ -91,15 +91,6 @@ struct MBTriangleSurface {
         connectivity[i] = uint3(verts.index(conn[3*i]), verts.index(conn[3*i+1]), verts.index(conn[3*i+2]));
     }
 
-    vertex_buffer_s = gprtDeviceBufferCreate<R>(context, vertices.size(), vertices.data());
-    conn_buffer = gprtDeviceBufferCreate<uint3>(context, connectivity.size(), connectivity.data());
-
-    triangle_geom_s = gprtGeomCreate<T>(context, g_type);
-
-    T* geom_data = gprtGeomGetParameters(triangle_geom_s);
-    geom_data->vertex = gprtBufferGetHandle(vertex_buffer_s);
-    geom_data->index = gprtBufferGetHandle(conn_buffer);
-
     // get the geom sense tag
     Tag geom_sense;
     const char GEOM_SENSE_2_TAG_NAME[] = "GEOM_SENSE_2";
@@ -115,6 +106,24 @@ struct MBTriangleSurface {
     rval = mbi->tag_get_data(id_tag, parent_vols.data(), parents_size, parent_ids.data());
     MB_CHK_SET_ERR_CONT(rval, "Failed to get parent volume IDs");
 
+    // if we're building up this surface and it has a reverse sense relative to the volume provided,
+    // flip the triangle normals by changing the triangle connectivity
+    bool sense_reverse = parent_vols[1] == vol_id;
+    if (sense_reverse) {
+      for (int i = 0; i < surf_tris.size(); i++) {
+        auto& conn = connectivity[i];
+        std::swap(conn[1], conn[2]);
+      }
+    }
+
+    vertex_buffer_s = gprtDeviceBufferCreate<R>(context, vertices.size(), vertices.data());
+    conn_buffer = gprtDeviceBufferCreate<uint3>(context, connectivity.size(), connectivity.data());
+
+    triangle_geom_s = gprtGeomCreate<T>(context, g_type);
+
+    T* geom_data = gprtGeomGetParameters(triangle_geom_s);
+    geom_data->vertex = gprtBufferGetHandle(vertex_buffer_s);
+    geom_data->index = gprtBufferGetHandle(conn_buffer);
     geom_data->vols[0] = parent_ids[0];
     geom_data->vols[1] = parent_ids[1];
   }
@@ -189,36 +198,27 @@ void create_volume_colors(Interface* mbi, std::vector<int> vol_ids = {}) {
 }
 
 template<class T, class G>
-std::vector<T> setup_surfaces(GPRTContext context, Interface* mbi, GPRTGeomTypeOf<G> g_type) {
+std::vector<T> setup_surfaces(GPRTContext context, std::shared_ptr<moab::DagMC> dag, GPRTGeomTypeOf<G> g_type) {
     ErrorCode rval;
 
     // get this surface's handle
     Tag dim_tag;
-    rval = mbi->tag_get_handle(GEOM_DIMENSION_TAG_NAME, dim_tag);
+    rval = dag->moab_instance()->tag_get_handle(GEOM_DIMENSION_TAG_NAME, dim_tag);
     MB_CHK_SET_ERR_CONT(rval, "Failed to get the geom dim tag");
 
-    int dim = 2;
-    const Tag tags[] = {dim_tag};
-    const void* const vals[] = {&dim};
+    int n_surfs = dag->num_entities(2);
 
-    Range surf_sets;
-    rval = mbi->get_entities_by_type_and_tag(0, MBENTITYSET, tags, vals, 1, surf_sets);
-    MB_CHK_SET_ERR_CONT(rval, "Failed to get surface sets");
-
-    Tag id_tag = mbi->globalId_tag();
-    std::vector<int> surf_ids(surf_sets.size());
-    rval = mbi->tag_get_data(id_tag, surf_sets, surf_ids.data());
-    MB_CHK_SET_ERR_CONT(rval, "Failed to get surface ids");
-
-    if (surf_ids.size() == 0) {
+    if (n_surfs == 0) {
       std::cerr << "No surfaces were found in the model" << std::endl;
       std::exit(1);
     }
 
     std::vector<T> out;
-    for (int i = 0; i < surf_sets.size(); i ++) {
-        if (visible_surfs.count(surf_sets[i]) == 0) continue;
-        out.emplace_back(std::move(T(context, mbi, g_type, surf_ids[i])));
+    for (int i = 0; i < n_surfs; i ++) {
+        int surf_id = dag->id_by_index(2, i);
+        EntityHandle surf_set = dag->entity_by_index(2, i);
+        if (visible_surfs.count(surf_set) == 0) continue;
+        out.emplace_back(std::move(T(context, dag->moab_instance(), g_type, surf_id)));
     }
 
     return out;
