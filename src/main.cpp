@@ -35,7 +35,7 @@ extern GPRTProgram dbl_deviceCode;
 void render();
 
 // initial image resolution
-const int2 fbSize = {1920, 1080};
+const int2 fbSize = {1000, 1000};
 
 int main(int argc, char** argv) {
 
@@ -236,6 +236,8 @@ int main(int argc, char** argv) {
     context, GPRT_IMAGE_TYPE_1D, GPRT_FORMAT_R8G8B8A8_SRGB, 256, 1, 1, false, nullptr
   );
 
+  auto sampler = gprtSamplerCreate(context, GPRT_FILTER_LINEAR, GPRT_FILTER_LINEAR, GPRT_FILTER_LINEAR, 1, GPRT_SAMPLER_ADDRESS_MODE_CLAMP);
+
   // need this to communicate double precision rays to intersection program
   // ray origin xyz + tmin, then ray direction xyz + tmax
   GPRTBufferOf<double> doubleRayBuffer = nullptr;
@@ -268,7 +270,10 @@ int main(int argc, char** argv) {
   rayGenData->colormap = gprtTextureGetHandle(colormap);
   rayGenData->numVolumes = numVols;
   rayGenData->maxVolID = max_vol_id;
+  rayGenData->graveyardID = graveyard_id;
+  rayGenData->complementID = implicit_complement_id;
   rayGenData->frameID = 0;
+  rayGenData->colormapSampler = gprtSamplerGetHandle(sampler);
 
   if (volVisData) *volVisData = *rayGenData;
 
