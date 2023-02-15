@@ -159,8 +159,8 @@ int main(int argc, char** argv) {
   auto bbox = bounding_box(mbi.get());
 
   // create geometries
-  std::vector<SPTriangleSurface> SPTriSurfs;
-  std::vector<DPTriangleSurface> DPTriSurfs;
+  std::map<moab::EntityHandle, std::vector<SPTriangleSurface>> SPTriSurfs;
+  std::map<moab::EntityHandle, std::vector<DPTriangleSurface>> DPTriSurfs;
 
   std::vector<GPRTGeomOf<SPTriangleData>> SPgeoms;
   std::vector<GPRTGeomOf<DPTriangleData>> DPgeoms;
@@ -174,19 +174,25 @@ int main(int argc, char** argv) {
   }
 
   if (useFloats) {
-    SPTriSurfs = setup_surfaces<SPTriangleSurface, SPTriangleData>(context, dag, SPTriangleType);
-    for (auto& ts : SPTriSurfs) {
-      ts.set_buffers();
-      SPgeoms.push_back(ts.triangle_geom_s);
+    SPTriSurfs = setup_surfaces<SPTriangleSurface, SPTriangleData>(context, dag, SPTriangleType, volumes);
+
+    for (auto& vol_surfs : SPTriSurfs) {
+      for (auto& ts : vol_surfs.second) {
+        ts.set_buffers();
+        SPgeoms.push_back(ts.triangle_geom_s);
+      }
     }
     blas = gprtTrianglesAccelCreate(context, SPgeoms.size(), SPgeoms.data());
     gprtAccelBuild(context, blas);
   } else {
-    DPTriSurfs = setup_surfaces<DPTriangleSurface, DPTriangleData>(context, dag, DPTriangleType);
+    DPTriSurfs = setup_surfaces<DPTriangleSurface, DPTriangleData>(context, dag, DPTriangleType, volumes);
 
-    for (auto& ts : DPTriSurfs) ts.aabbs(context, module);
-
-    for (const auto& ts : DPTriSurfs) DPgeoms.push_back(ts.triangle_geom_s);
+    for (auto& vol_surfs : DPTriSurfs) {
+      for (auto& ts : vol_surfs.second) {
+        ts.aabbs(context, module);
+        DPgeoms.push_back(ts.triangle_geom_s);
+      }
+    }
     blas = gprtAABBAccelCreate(context, DPgeoms.size(), DPgeoms.data());
     gprtAccelBuild(context, blas);
   }
@@ -253,10 +259,12 @@ int main(int argc, char** argv) {
     rayGenData->dpRays = gprtBufferGetHandle(doubleRayBuffer);
 
 
-    for (auto& ts : DPTriSurfs) {
-      auto dpGeomData = gprtGeomGetParameters(ts.triangle_geom_s);
-      dpGeomData->fbSize = fbSize;
-      dpGeomData->dpRays = gprtBufferGetHandle(doubleRayBuffer);
+    for (auto& vol_surfs : DPTriSurfs) {
+      for (auto& ts : vol_surfs.second) {
+        auto dpGeomData = gprtGeomGetParameters(ts.triangle_geom_s);
+        dpGeomData->fbSize = fbSize;
+        dpGeomData->dpRays = gprtBufferGetHandle(doubleRayBuffer);
+      }
     }
   }
   rayGenData->fbPtr = gprtBufferGetHandle(frameBuffer);
@@ -514,8 +522,12 @@ int main(int argc, char** argv) {
   gprtAccelDestroy(world);
   // if (dpGeom) gprtGeomDestroy(dpGeom);
   // for (auto& spGeom : spGeoms) gprtGeomDestroy(spGeom);
-  for (auto& g : SPTriSurfs) { g.cleanup(); }
-  for (auto& g : DPTriSurfs) { g.cleanup();}
+  for (auto& vol_surfs : SPTriSurfs) {
+    for (auto& g : vol_surfs.second) { g.cleanup(); }
+  }
+  for (auto& vol_surfs : DPTriSurfs) {
+    for (auto& g : vol_surfs.second) { g.cleanup();}
+  }
   gprtGeomTypeDestroy(DPTriangleType);
   gprtGeomTypeDestroy(SPTriangleType);
   gprtModuleDestroy(module);

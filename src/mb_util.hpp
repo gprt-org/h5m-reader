@@ -198,7 +198,7 @@ void create_volume_colors(Interface* mbi, std::vector<int> vol_ids = {}) {
 }
 
 template<class T, class G>
-std::vector<T> setup_surfaces(GPRTContext context, std::shared_ptr<moab::DagMC> dag, GPRTGeomTypeOf<G> g_type) {
+std::map<EntityHandle, std::vector<T>> setup_surfaces(GPRTContext context, std::shared_ptr<moab::DagMC> dag, GPRTGeomTypeOf<G> g_type, std::vector<int> visible_vol_ids = {}) {
     ErrorCode rval;
 
     // get this surface's handle
@@ -213,12 +213,26 @@ std::vector<T> setup_surfaces(GPRTContext context, std::shared_ptr<moab::DagMC> 
       std::exit(1);
     }
 
-    std::vector<T> out;
-    for (int i = 0; i < n_surfs; i ++) {
-        int surf_id = dag->id_by_index(2, i);
-        EntityHandle surf_set = dag->entity_by_index(2, i);
-        if (visible_surfs.count(surf_set) == 0) continue;
-        out.emplace_back(std::move(T(context, dag->moab_instance(), g_type, surf_id)));
+    if (visible_vol_ids.size() == 0) {
+      for (int i = 0; i < dag->num_entities(3); i++) visible_vol_ids.push_back(dag->id_by_index(3, i));
+    }
+
+    std::map<EntityHandle, std::vector<T>> out;
+    for (int i = 0; i < dag->num_entities(3); i++) {
+      EntityHandle vol = dag->entity_by_index(3, i);
+      int vol_id = dag->id_by_index(3, i);
+
+      if (std::find(visible_vol_ids.begin(), visible_vol_ids.end(), vol_id) != visible_vol_ids.end()) continue;
+
+      Range vol_surfs;
+      rval = dag->moab_instance()->get_child_meshsets(vol, vol_surfs);
+
+      std::vector<T> surf_geoms;
+      for (auto surf : vol_surfs) {
+        int surf_id = dag->id_by_index(2, dag->index_by_handle(surf));
+        surf_geoms.emplace_back(std::move(T(context, dag->moab_instance(), g_type, surf_id, vol_id)));
+      }
+      out[vol] = surf_geoms;
     }
 
     return out;
