@@ -159,13 +159,16 @@ int main(int argc, char** argv) {
   auto bbox = bounding_box(mbi.get());
 
   // create geometries
-  std::map<moab::EntityHandle, std::vector<SPTriangleSurface>> SPTriSurfs;
-  std::map<moab::EntityHandle, std::vector<DPTriangleSurface>> DPTriSurfs;
+  std::map<int, std::vector<SPTriangleSurface>> SPTriSurfs;
+  std::map<int, std::vector<DPTriangleSurface>> DPTriSurfs;
 
-  std::vector<GPRTGeomOf<SPTriangleData>> SPgeoms;
-  std::vector<GPRTGeomOf<DPTriangleData>> DPgeoms;
+  std::map<int, std::vector<GPRTGeomOf<SPTriangleData>>> SPgeoms;
+  std::map<int, std::vector<GPRTGeomOf<DPTriangleData>>> DPgeoms;
 
-  GPRTAccel blas;
+  GPRTAccel b;
+  std::vector<GPRTAccel> blass;
+  std::map<int, int> blas_map; //map volume ID to index in BLAS buffer
+
   uint32_t numVols = dag->num_entities(3); // I don't know how to get this yet...
 
   int max_vol_id = 0;
@@ -177,24 +180,36 @@ int main(int argc, char** argv) {
     SPTriSurfs = setup_surfaces<SPTriangleSurface, SPTriangleData>(context, dag, SPTriangleType, volumes);
 
     for (auto& vol_surfs : SPTriSurfs) {
+      SPgeoms[vol_surfs.first] = {};
       for (auto& ts : vol_surfs.second) {
         ts.set_buffers();
-        SPgeoms.push_back(ts.triangle_geom_s);
+        SPgeoms[vol_surfs.first].push_back(ts.triangle_geom_s);
       }
     }
-    blas = gprtTrianglesAccelCreate(context, SPgeoms.size(), SPgeoms.data());
-    gprtAccelBuild(context, blas);
+
+    for (auto& vol_geoms : SPgeoms) {
+      if (vol_geoms.second.size() == 0) continue;
+      blas_map[vol_geoms.first] = blass.size();
+      blass.push_back(gprtTrianglesAccelCreate(context, vol_geoms.second.size(), vol_geoms.second.data()));
+      gprtAccelBuild(context, blass.back());
+    }
   } else {
     DPTriSurfs = setup_surfaces<DPTriangleSurface, DPTriangleData>(context, dag, DPTriangleType, volumes);
 
     for (auto& vol_surfs : DPTriSurfs) {
+      DPgeoms[vol_surfs.first] = {};
       for (auto& ts : vol_surfs.second) {
         ts.aabbs(context, module);
-        DPgeoms.push_back(ts.triangle_geom_s);
+        DPgeoms[vol_surfs.first].push_back(ts.triangle_geom_s);
       }
     }
-    blas = gprtAABBAccelCreate(context, DPgeoms.size(), DPgeoms.data());
-    gprtAccelBuild(context, blas);
+
+    for (auto& vol_geoms : DPgeoms) {
+      if (vol_geoms.second.size() == 0 ) continue;
+      blas_map[vol_geoms.first] = blass.size();
+      blass.push_back(gprtAABBAccelCreate(context, vol_geoms.second.size(), vol_geoms.second.data()));
+      gprtAccelBuild(context, blass.back());
+    }
   }
 
   // empty the mesh library's copy (good riddance)
@@ -207,6 +222,26 @@ int main(int argc, char** argv) {
     std::exit(1);
   }
 
+  // set the acceleration data structures for surfaces
+  if (useFloats) {
+    for (auto& v : SPTriSurfs) {
+      for (auto& s : v.second) {
+        SPTriangleData* geom_data = gprtGeomGetParameters(s.triangle_geom_s);
+        geom_data->ff_vol = blas_map[geom_data->vols[0]];
+        geom_data->bf_vol = blas_map[geom_data->vols[1]];
+      }
+    }
+  } else {
+    for (auto& v : DPTriSurfs) {
+      for (auto& s : v.second) {
+        DPTriangleData* geom_data = gprtGeomGetParameters(s.triangle_geom_s);
+        geom_data->ff_vol = blas_map[geom_data->vols[0]];
+        geom_data->bf_vol = blas_map[geom_data->vols[1]];
+      }
+    }
+
+  }
+
   double3 aabbCentroid = bbox.first + (bbox.second - bbox.first) * 0.5;
 
   float3 lookFrom = float3(float(aabbCentroid.x), float(aabbCentroid.y)  - 50.f, float(aabbCentroid.z));
@@ -217,8 +252,21 @@ int main(int argc, char** argv) {
   // ------------------------------------------------------------------
   // the group/accel for that mesh
   // ------------------------------------------------------------------
-  GPRTAccel world = gprtInstanceAccelCreate(context, 1, &blas);
+  GPRTAccel world = gprtInstanceAccelCreate(context, blass.size(), blass.data());
   gprtAccelBuild(context, world);
+
+  std::vector<GPRTAccel> tlass;
+  for (int i = 0; i < blass.size(); i++) {
+    tlass.push_back(gprtInstanceAccelCreate(context, 1, blass.data() + i));
+    gprtAccelBuild(context, tlass.back());
+  }
+
+  std::vector<gprt::Accel> accel_ptrs;
+  for (int i = 0; i <  tlass.size(); i++) {
+    accel_ptrs.push_back(gprtAccelGetHandle(tlass[i]));
+  }
+
+  auto partTree_buffer = gprtDeviceBufferCreate<gprt::Accel>(context, accel_ptrs.size(), accel_ptrs.data());
 
   // ----------- set variables  ----------------------------
   auto missData = gprtMissGetParameters(miss);
@@ -272,6 +320,7 @@ int main(int argc, char** argv) {
   rayGenData->guiTexture = gprtTextureGetHandle(guiColorAttachment);
   rayGenData->fbSize = fbSize;
   rayGenData->world = gprtAccelGetHandle(world);
+  rayGenData->partTrees = gprtBufferGetHandle(partTree_buffer);
   rayGenData->aabbMin = float3(bbox.first.x, bbox.first.y, bbox.first.z);
   rayGenData->aabbMax = float3(bbox.second.x, bbox.second.y, bbox.second.z);
   rayGenData->unit = 1000.f;
@@ -510,6 +559,7 @@ int main(int argc, char** argv) {
   // gprtBufferDestroy(indexBuffer);
   // if (aabbPositionsBuffer) gprtBufferDestroy(aabbPositionsBuffer);
   gprtBufferDestroy(frameBuffer);
+  gprtBufferDestroy(partTree_buffer);
   gprtTextureDestroy(guiColorAttachment);
   gprtTextureDestroy(guiDepthAttachment);
   // if (doubleRayBuffer) gprtBufferDestroy(doubleRayBuffer);
@@ -518,7 +568,7 @@ int main(int argc, char** argv) {
   if (DPRayGen) gprtRayGenDestroy(DPRayGen);
   // if (DPRayGen) gprtRayGenDestroy(DPRayGen);
   gprtMissDestroy(miss);
-  gprtAccelDestroy(blas);
+  for (auto& blas : blass) gprtAccelDestroy(blas);
   gprtAccelDestroy(world);
   // if (dpGeom) gprtGeomDestroy(dpGeom);
   // for (auto& spGeom : spGeoms) gprtGeomDestroy(spGeom);

@@ -31,13 +31,15 @@ struct DPTriangleData
   alignas(16) gprt::Buffer vertex; // float *
   /*! array/buffer of AABBs */
   alignas(16) gprt::Buffer aabbs;
-
-
   /*! array/buffer of double precision rays */
   alignas(16) gprt::Buffer dpRays;
   alignas(8) int2 fbSize;
-  /*! volume on the forward and reverse side of the surface */
+  /*! volume on the forward (front) and reverse (back) side of the surface */
   alignas(8) int2 vols;
+  /*! acceleration data structure for the volume on the front face */
+  alignas(4) int ff_vol;
+  /*! acceleration data structure for the volume on the back face */
+  alignas(4) int bf_vol;
 };
 
 struct SPTriangleData
@@ -48,6 +50,10 @@ struct SPTriangleData
   alignas(16) gprt::Buffer vertex; // float *
   /*! volume on the forward and reverse side of the surface */
   alignas(8) int2 vols;
+  /*! acceleration data structure for the volume on the front face */
+  alignas(4) int ff_vol;
+  /*! acceleration data structure for the volume on the back face */
+  alignas(4) int bf_vol;
 };
 
 struct RayGenData
@@ -72,7 +78,7 @@ struct RayGenData
   alignas(8) int2 fbSize;
 
   alignas(16) gprt::Accel world;
-  alignas(16) gprt::Buffer partTrees; // gprt::Accel*.
+  alignas(16) gprt::Buffer partTrees; // gprt::Accel*
 
   alignas(16) float3 aabbMin;
   alignas(16) float3 aabbMax;

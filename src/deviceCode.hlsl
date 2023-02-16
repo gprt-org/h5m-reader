@@ -40,6 +40,7 @@ float4 over(float4 a, float4 b) {
 struct Payload
 {
   int2 vol_ids;
+  int next_vol;
   float hitDistance;
 };
 
@@ -114,7 +115,9 @@ GPRT_RAYGEN_PROGRAM(SPRayGen, (RayGenData, record))
   rayDesc.TMin = 0.0;
   rayDesc.TMax = 10000.0;
 
-  RaytracingAccelerationStructure world = gprt::getAccelHandle(record.world);
+  gprt::Accel part = gprt::load<gprt::Accel>(record.partTrees, 0);
+  // keep in raygen prog
+  RaytracingAccelerationStructure world = gprt::getAccelHandle(part);
 
   float4 color = float4(0.f, 0.f, 0.f, 0.f);
 
@@ -165,11 +168,13 @@ GPRT_RAYGEN_PROGRAM(SPRayGen, (RayGenData, record))
         if (color.a > .99) break;
       }
 
-      rayDesc.Origin = rayDesc.Origin + rayDesc.Direction * (payload.hitDistance + .01);
+     rayDesc.Origin = rayDesc.Origin + rayDesc.Direction * (payload.hitDistance + .01);
     }
 
+    gprt::Accel next = gprt::load<gprt::Accel>(record.partTrees, payload.next_vol);
+    world = gprt::getAccelHandle(next);
   }
-  
+
   // if (all(pixelID == centerID))
   //   printf("center vol ID is front - %d back - %d\n", payload.vol_ids.x, payload.vol_ids.y);
 
@@ -607,10 +612,12 @@ GPRT_CLOSEST_HIT_PROGRAM(SPTriangle, (SPTriangleData, record), (Payload, payload
   if (hit_kind == HIT_KIND_TRIANGLE_FRONT_FACE) {
     payload.vol_ids.x = record.vols[0];
     payload.vol_ids.y = record.vols[1];
+    payload.next_vol = record.bf_vol;
   }
   else {
     payload.vol_ids.x = record.vols[1];
     payload.vol_ids.y = record.vols[0];
+    payload.next_vol = record.ff_vol;
   }
   payload.hitDistance = RayTCurrent();
 }
