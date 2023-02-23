@@ -640,8 +640,9 @@ GPRT_CLOSEST_HIT_PROGRAM(SPTriangle, (SPTriangleData, record), (Payload, payload
     if (all(pixelID == centerID)) {
       // printf("Index of next volume BLAS %i", payload.next_vol);
       // printf("Going from volume %i into volume %i, ", payload.vol_ids.x, payload.vol_ids.y);
-      printf("Index of next volume BLAS %i", record.ff_vol);
-      printf("Going from volume %i into volume %i, ", record.vols[1], record.vols[0]);
+      printf("\nSurface ID: %i \n"
+      "Geom Data Vols: {%i, %i}\n"
+      "Index of next volume BLAS %i\n", record.id, record.vols[1], record.vols[0], record.ff_vol);
     }
   }
   payload.hitDistance = RayTCurrent();
