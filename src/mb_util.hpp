@@ -10,6 +10,7 @@
 
 using namespace moab;
 
+int DEBUG_SURF = -4;
 
 std::unordered_map<EntityHandle, float3> volume_colors;
 std::set<EntityHandle> visible_surfs;
@@ -21,6 +22,7 @@ float3 rnd_color() {
 template<class T, typename R>
 struct MBTriangleSurface {
 
+  int id;
   int n_tris;
   int frontface_vol;
   int backface_vol;
@@ -110,12 +112,19 @@ struct MBTriangleSurface {
 
     // if we're building up this surface and it has a reverse sense relative to the volume provided,
     // flip the triangle normals by changing the triangle connectivity
-    bool sense_reverse = parent_vols[1] == vol_id;
+    bool sense_reverse = parent_ids[1] == vol_id;
+    id = sense_reverse ? -surface_id : surface_id;
     if (sense_reverse) {
       for (int i = 0; i < surf_tris.size(); i++) {
         auto& conn = connectivity[i];
         std::swap(conn[1], conn[2]);
       }
+    }
+
+    if (id == DEBUG_SURF) {
+    std::cout << "----------------" << std::endl;
+    std::cout << "Surface Creation Stage" << std::endl;
+    std::cout << "Surface " << id << ", natural parent vols: " << parent_ids[0] << ", " << parent_ids[1] << std::endl;
     }
 
     vertex_buffer_s = gprtDeviceBufferCreate<R>(context, vertices.size(), vertices.data());
@@ -126,9 +135,21 @@ struct MBTriangleSurface {
     T* geom_data = gprtGeomGetParameters(triangle_geom_s);
     geom_data->vertex = gprtBufferGetHandle(vertex_buffer_s);
     geom_data->index = gprtBufferGetHandle(conn_buffer);
-    geom_data->vols[0] = parent_ids[0];
-    geom_data->vols[1] = parent_ids[1];
-    if (sense_reverse) std::swap(geom_data->vols[0], geom_data->vols[1]);
+    geom_data->id = id;
+
+    if (surface_id == DEBUG_SURF) std::cout << "SPTriangleGeom ID: " << geom_data->id << std::endl;
+
+    if (sense_reverse) {
+      geom_data->vols[0] = parent_ids[1];
+      geom_data->vols[1] = parent_ids[0];
+    } else {
+      geom_data->vols[0] = parent_ids[0];
+      geom_data->vols[1] = parent_ids[1];
+    }
+
+    if (id == DEBUG_SURF)
+      std::cout << "Geom data vols: " << geom_data->vols << std::endl;
+
   }
 
   void aabbs(GPRTContext context, GPRTModule module) {
@@ -217,13 +238,18 @@ std::map<int, std::vector<T>> setup_surfaces(GPRTContext context, std::shared_pt
     }
 
     if (visible_vol_ids.size() == 0) {
-      for (int i = 0; i < dag->num_entities(3); i++) visible_vol_ids.push_back(dag->id_by_index(3, i));
+      for (int i = 0; i < dag->num_entities(3); i++) visible_vol_ids.push_back(dag->id_by_index(3, i+1));
+      // add graveyard explicitly
+      EntityHandle gyg;
+      Range gys;
+      dag->get_graveyard_group(gyg);
+      dag->moab_instance()->get_entities_by_type(gyg, MBENTITYSET, gys);
+//      visible_vol_ids.push_back(dag->get_entity_id(gys[0]));
     }
 
     std::map<int, std::vector<T>> out;
-    for (int i = 0; i < dag->num_entities(3); i++) {
-      EntityHandle vol = dag->entity_by_index(3, i);
-      int vol_id = dag->id_by_index(3, i);
+    for (auto vol_id : visible_vol_ids) {
+      EntityHandle vol = dag->entity_by_id(3, vol_id);
 
       if (std::find(visible_vol_ids.begin(), visible_vol_ids.end(), vol_id) == visible_vol_ids.end()) continue;
 

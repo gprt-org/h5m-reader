@@ -91,6 +91,10 @@ int main(int argc, char** argv) {
     MOAB_CHECK_ERROR(rval);
   }
 
+  // write geometry as-rendered for verification
+  std::string file_out{"as-is.h5m"};
+  dag->write_mesh(file_out.c_str(), file_out.size());
+
   // get the graveyard group
   EntityHandle graveyard_group;
   rval = dag->get_graveyard_group(graveyard_group);
@@ -165,11 +169,10 @@ int main(int argc, char** argv) {
   std::map<int, std::vector<GPRTGeomOf<SPTriangleData>>> SPgeoms;
   std::map<int, std::vector<GPRTGeomOf<DPTriangleData>>> DPgeoms;
 
-  GPRTAccel b;
   std::vector<GPRTAccel> blass;
   std::map<int, int> blas_map; //map volume ID to index in BLAS buffer
 
-  uint32_t numVols = dag->num_entities(3); // I don't know how to get this yet...
+  uint32_t numVols = dag->num_entities(3);
 
   int max_vol_id = 0;
   for (int i = 0; i < numVols; i++) {
@@ -177,6 +180,7 @@ int main(int argc, char** argv) {
   }
 
   if (useFloats) {
+    // create the triangle surfaces for each volume, stored in a map of vol_id to vector of surface objects
     SPTriSurfs = setup_surfaces<SPTriangleSurface, SPTriangleData>(context, dag, SPTriangleType, volumes);
 
     for (auto& vol_surfs : SPTriSurfs) {
@@ -187,6 +191,7 @@ int main(int argc, char** argv) {
       }
     }
 
+    // build a BLAS for each volume
     for (auto& vol_geoms : SPgeoms) {
       if (vol_geoms.second.size() == 0) continue;
       blas_map[vol_geoms.first] = blass.size();
@@ -229,6 +234,16 @@ int main(int argc, char** argv) {
         SPTriangleData* geom_data = gprtGeomGetParameters(s.triangle_geom_s);
         geom_data->ff_vol = blas_map[geom_data->vols[0]];
         geom_data->bf_vol = blas_map[geom_data->vols[1]];
+        if (s.id == DEBUG_SURF) {
+          std::cout << "-------------" << std::endl;
+          std::cout << "BLAS indexing stage" << std::endl;
+          std::cout << "Surface ID: " << s.id << ", Geom Data ID: " << geom_data->id << std::endl;
+          std::cout << "Geom Data Vols: " << geom_data->vols << std::endl;
+          std::cout << "FF BLAS idx: " << geom_data->ff_vol << ", BF BLAS idx: " << geom_data->bf_vol << std::endl;
+        }
+        // ensure the index being set doesn't exceed a valid index value
+        if (geom_data->ff_vol > blass.size() - 1) { std::cout << "FF Error" << std::endl; std::exit(1); }
+        if (geom_data->bf_vol > blass.size() - 1) { std::cout << "BF Error" << std::endl; std::exit(1); }
       }
     }
   } else {
@@ -239,28 +254,26 @@ int main(int argc, char** argv) {
         geom_data->bf_vol = blas_map[geom_data->vols[1]];
       }
     }
-
   }
-
   double3 aabbCentroid = bbox.first + (bbox.second - bbox.first) * 0.5;
 
-  float3 lookFrom = float3(float(aabbCentroid.x), float(aabbCentroid.y)  - 50.f, float(aabbCentroid.z));
+  float3 lookFrom = float3(float(aabbCentroid.x), float(aabbCentroid.y)  - 100.f, float(aabbCentroid.z));
   float3 lookAt = float3(float(aabbCentroid.x),float(aabbCentroid.y),float(aabbCentroid.z));
   float3 lookUp = {0.f,0.f,-1.f};
   float cosFovy = 0.66f;
 
-  // ------------------------------------------------------------------
-  // the group/accel for that mesh
-  // ------------------------------------------------------------------
+  // create one world tree from all of the volume BLAS's
   GPRTAccel world = gprtInstanceAccelCreate(context, blass.size(), blass.data());
   gprtAccelBuild(context, world);
 
+  // build a TLAS for each volume
   std::vector<GPRTAccel> tlass;
   for (int i = 0; i < blass.size(); i++) {
     tlass.push_back(gprtInstanceAccelCreate(context, 1, blass.data() + i));
     gprtAccelBuild(context, tlass.back());
   }
 
+  // get acceleration data structures to be mapped to device
   std::vector<gprt::Accel> accel_ptrs;
   for (int i = 0; i <  tlass.size(); i++) {
     accel_ptrs.push_back(gprtAccelGetHandle(tlass[i]));

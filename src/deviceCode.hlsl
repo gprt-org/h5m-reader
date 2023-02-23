@@ -40,8 +40,9 @@ float4 over(float4 a, float4 b) {
 struct Payload
 {
   int2 vol_ids;
-  int next_vol;
+  int surf_id;
   float hitDistance;
+  int next_vol;
 };
 
 GPRT_RAYGEN_PROGRAM(DPRayGen, (RayGenData, record))
@@ -115,9 +116,9 @@ GPRT_RAYGEN_PROGRAM(SPRayGen, (RayGenData, record))
   rayDesc.TMin = 0.0;
   rayDesc.TMax = 10000.0;
 
-  gprt::Accel part = gprt::load<gprt::Accel>(record.partTrees, 0);
-  // keep in raygen prog
-  RaytracingAccelerationStructure world = gprt::getAccelHandle(part);
+  // start by firing at the entire scene
+  RaytracingAccelerationStructure world = gprt::getAccelHandle(record.world);
+  world = gprt::getAccelHandle(record.world);
 
   float4 color = float4(0.f, 0.f, 0.f, 0.f);
 
@@ -126,41 +127,60 @@ GPRT_RAYGEN_PROGRAM(SPRayGen, (RayGenData, record))
   Texture1D colormap = gprt::getTexture1DHandle(record.colormap);
   SamplerState sampler = gprt::getSamplerHandle(record.colormapSampler);
 
+  float nudge = 0.0001;
+
+  if (all(pixelID == centerID)) printf("Tracing...");
+
+
   for (int i = 0; i < MAX_DEPTH; ++i) {
-    TraceRay(
-      world, // the tree
-      RAY_FLAG_NONE, // RAY_FLAG_CULL_BACK_FACING_TRIANGLES, // ray flags
-      0xff, // instance inclusion mask
-      0, // ray type
-      1, // number of ray types
-      0, // miss type
-      rayDesc, // the ray to trace
-      payload // the payload IO
-    );
+
+  TraceRay(
+    world, // the tree
+    RAY_FLAG_CULL_FRONT_FACING_TRIANGLES, // RAY_FLAG_CULL_BACK_FACING_TRIANGLES, // ray flags
+    0xff, // instance inclusion mask
+    0, // ray type
+    1, // number of ray types
+    0, // miss type
+    rayDesc, // the ray to trace
+    payload // the payload IO
+  );
+
+  // MESSAGE(centerID.x, centerID.y, "Next vol: %i", payload.next_vol);
+  if (all(pixelID == centerID)) {
+    printf("Center: hit surface %i. Next vol ID is %i", payload.surf_id, payload.vol_ids.y);
+    printf("Next vol idx: %i", payload.next_vol);
+    printf("Distance: %f", payload.hitDistance);
+  }
 
     // float3 color = normalize(float3(Random(payload.vol_ids.x), Random(payload.vol_ids.x + 1), Random(payload.vol_ids.x + 1)));
 
-    if (payload.vol_ids.x == -2) {
+    if (payload.vol_ids.y == -2) {
       color = over(color, float4(0.0f, 0.0f, 0.0f, 1.0f));
       break;
     }
 
-    else if (payload.vol_ids.x == -3) {
+    else if (payload.vol_ids.y == -3) {
       color = over(color, float4(0.0f, 0.0f, 0.0f, 1.f));
       break;
     }
 
-    else if (payload.vol_ids.x == record.complementID) {
-      rayDesc.Origin = rayDesc.Origin + rayDesc.Direction * (payload.hitDistance + .01);
+    else if (payload.vol_ids.y == record.complementID) {
+      // printf("Moving into IPC");
+      rayDesc.Origin = rayDesc.Origin + rayDesc.Direction * (payload.hitDistance + nudge);
+      gprt::Accel next = gprt::load<gprt::Accel>(record.partTrees, payload.next_vol);
+      world = gprt::getAccelHandle(next);
       continue;
     }
-    else if (payload.vol_ids.x == record.graveyardID) {
-      rayDesc.Origin = rayDesc.Origin + rayDesc.Direction * (payload.hitDistance + .01);
+    else if (payload.vol_ids.y == record.graveyardID) {
+      // printf("Moving into GY");
+      rayDesc.Origin = rayDesc.Origin + rayDesc.Direction * (payload.hitDistance + nudge);
+      gprt::Accel next = gprt::load<gprt::Accel>(record.partTrees, payload.next_vol);
+      world = gprt::getAccelHandle(next);
       continue;
     }
 
     else {
-      float dataValue = float(payload.vol_ids.x) / float(maxVolID);
+      float dataValue = float(payload.vol_ids.y) / float(maxVolID);
       float4 xf = colormap.SampleGrad(sampler, dataValue, 0.f, 0.f);
 
       if (xf.w != 0.f) {
@@ -168,15 +188,11 @@ GPRT_RAYGEN_PROGRAM(SPRayGen, (RayGenData, record))
         if (color.a > .99) break;
       }
 
-     rayDesc.Origin = rayDesc.Origin + rayDesc.Direction * (payload.hitDistance + .01);
+     rayDesc.Origin = rayDesc.Origin + rayDesc.Direction * (payload.hitDistance + nudge);
+     gprt::Accel next = gprt::load<gprt::Accel>(record.partTrees, payload.next_vol);
+     world = gprt::getAccelHandle(next);
     }
-
-    gprt::Accel next = gprt::load<gprt::Accel>(record.partTrees, payload.next_vol);
-    world = gprt::getAccelHandle(next);
   }
-
-  // if (all(pixelID == centerID))
-  //   printf("center vol ID is front - %d back - %d\n", payload.vol_ids.x, payload.vol_ids.y);
 
   // a crosshair
   if (any(pixelID == centerID)) color = float4(1.f, 1.f, 1.f, 1.f) - color;
@@ -609,15 +625,24 @@ struct SPAttribute
 GPRT_CLOSEST_HIT_PROGRAM(SPTriangle, (SPTriangleData, record), (Payload, payload), (SPAttribute, attribute))
 {
   uint hit_kind = HitKind();
+  payload.surf_id = record.id;
   if (hit_kind == HIT_KIND_TRIANGLE_FRONT_FACE) {
-    payload.vol_ids.x = record.vols[0];
-    payload.vol_ids.y = record.vols[1];
-    payload.next_vol = record.bf_vol;
+    payload.vol_ids.x = record.vols[0]; // moving out of this volume
+    payload.vol_ids.y = record.vols[1]; // moving into this volume
+    payload.next_vol = record.bf_vol; // moving into the backface volume
   }
   else {
-    payload.vol_ids.x = record.vols[1];
-    payload.vol_ids.y = record.vols[0];
-    payload.next_vol = record.ff_vol;
+    payload.vol_ids.x = record.vols[1]; // moving out of this volume
+    payload.vol_ids.y = record.vols[0]; // moving into this volume
+    payload.next_vol = record.ff_vol; // moving into the frontface volume
+    uint2 pixelID = DispatchRaysIndex().xy;
+    uint2 centerID = DispatchRaysDimensions().xy / 2;
+    if (all(pixelID == centerID)) {
+      // printf("Index of next volume BLAS %i", payload.next_vol);
+      // printf("Going from volume %i into volume %i, ", payload.vol_ids.x, payload.vol_ids.y);
+      printf("Index of next volume BLAS %i", record.ff_vol);
+      printf("Going from volume %i into volume %i, ", record.vols[1], record.vols[0]);
+    }
   }
   payload.hitDistance = RayTCurrent();
 }
