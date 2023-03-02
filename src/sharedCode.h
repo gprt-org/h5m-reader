@@ -51,13 +51,13 @@ struct SPTriangleData
   /*! array/buffer of vertex positions */
   alignas(16) gprt::Buffer vertex; // float *
   /* ID of the surface (negative if triangle connecivity has been reversed)*/
-  alignas(4) int id;
+  alignas(4) int32_t id;
+  /*! acceleration data structure for the volume on the front face */
+  alignas(4) int32_t ff_vol;
+  /*! acceleration data structure for the volume on the back face */
+  alignas(4) int32_t bf_vol;
   /*! volume on the forward and reverse side of the surface */
   alignas(8) int2 vols;
-  /*! acceleration data structure for the volume on the front face */
-  alignas(4) int ff_vol;
-  /*! acceleration data structure for the volume on the back face */
-  alignas(4) int bf_vol;
 };
 
 struct RayGenData
@@ -80,6 +80,8 @@ struct RayGenData
   alignas(16) gprt::Sampler colormapSampler;
 
   alignas(8) int2 fbSize;
+
+  alignas(4) uint32_t moveOrigin;
 
   alignas(16) gprt::Accel world;
   alignas(16) gprt::Buffer partTrees; // gprt::Accel*

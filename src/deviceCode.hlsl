@@ -127,10 +127,9 @@ GPRT_RAYGEN_PROGRAM(SPRayGen, (RayGenData, record))
   Texture1D colormap = gprt::getTexture1DHandle(record.colormap);
   SamplerState sampler = gprt::getSamplerHandle(record.colormapSampler);
 
-  float nudge = 0.0001;
+  float nudge = 0.000;
 
   if (all(pixelID == centerID)) printf("Tracing...");
-
 
   for (int i = 0; i < MAX_DEPTH; ++i) {
 
@@ -147,7 +146,7 @@ GPRT_RAYGEN_PROGRAM(SPRayGen, (RayGenData, record))
 
   // MESSAGE(centerID.x, centerID.y, "Next vol: %i", payload.next_vol);
   if (all(pixelID == centerID)) {
-    printf("Center: hit surface %i. Next vol ID is %i", payload.surf_id, payload.vol_ids.y);
+    printf("Center: hit surface %i. Next vol ID is %i", payload.surf_id, payload.vol_ids.x);
     printf("Next vol idx: %i", payload.next_vol);
     printf("Distance: %f", payload.hitDistance);
   }
@@ -164,23 +163,29 @@ GPRT_RAYGEN_PROGRAM(SPRayGen, (RayGenData, record))
       break;
     }
 
-    else if (payload.vol_ids.y == record.complementID) {
-      // printf("Moving into IPC");
-      rayDesc.Origin = rayDesc.Origin + rayDesc.Direction * (payload.hitDistance + nudge);
+    else if (payload.vol_ids.x == record.complementID) {
+      if (record.moveOrigin)
+        rayDesc.Origin = rayDesc.Origin + rayDesc.Direction * (payload.hitDistance + nudge);
+      else
+        rayDesc.TMin = payload.hitDistance;
+
       gprt::Accel next = gprt::load<gprt::Accel>(record.partTrees, payload.next_vol);
       world = gprt::getAccelHandle(next);
       continue;
     }
-    else if (payload.vol_ids.y == record.graveyardID) {
-      // printf("Moving into GY");
-      rayDesc.Origin = rayDesc.Origin + rayDesc.Direction * (payload.hitDistance + nudge);
+    else if (payload.vol_ids.x == record.graveyardID) {
+      if (record.moveOrigin)
+        rayDesc.Origin = rayDesc.Origin + rayDesc.Direction * (payload.hitDistance + nudge);
+      else
+        rayDesc.TMin = payload.hitDistance;
+
       gprt::Accel next = gprt::load<gprt::Accel>(record.partTrees, payload.next_vol);
       world = gprt::getAccelHandle(next);
       continue;
     }
 
     else {
-      float dataValue = float(payload.vol_ids.y) / float(maxVolID);
+      float dataValue = float(payload.vol_ids.x) / float(maxVolID);
       float4 xf = colormap.SampleGrad(sampler, dataValue, 0.f, 0.f);
 
       if (xf.w != 0.f) {
@@ -188,9 +193,13 @@ GPRT_RAYGEN_PROGRAM(SPRayGen, (RayGenData, record))
         if (color.a > .99) break;
       }
 
-     rayDesc.Origin = rayDesc.Origin + rayDesc.Direction * (payload.hitDistance + nudge);
-     gprt::Accel next = gprt::load<gprt::Accel>(record.partTrees, payload.next_vol);
-     world = gprt::getAccelHandle(next);
+      if (record.moveOrigin)
+        rayDesc.Origin = rayDesc.Origin + rayDesc.Direction * (payload.hitDistance + nudge);
+      else
+        rayDesc.TMin = payload.hitDistance;
+
+      gprt::Accel next = gprt::load<gprt::Accel>(record.partTrees, payload.next_vol);
+      world = gprt::getAccelHandle(next);
     }
   }
 

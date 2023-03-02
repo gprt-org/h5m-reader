@@ -35,7 +35,7 @@ extern GPRTProgram dbl_deviceCode;
 void render();
 
 // initial image resolution
-const int2 fbSize = {1000, 1000};
+const int2 fbSize = {2560, 1440};
 
 int main(int argc, char** argv) {
 
@@ -78,6 +78,8 @@ int main(int argc, char** argv) {
   std::cout << "Loading " << filename << "..." << std::endl;
   rval = dag->load_file(filename.c_str());
   MOAB_CHECK_ERROR(rval);
+
+  std::cout << "SPTriangleData size: " << sizeof(SPTriangleData) << std::endl;
 
   rval = dag->setup_indices();
   MOAB_CHECK_ERROR(rval);
@@ -332,6 +334,7 @@ int main(int argc, char** argv) {
   rayGenData->accumPtr = gprtBufferGetHandle(accumBuffer);
   rayGenData->guiTexture = gprtTextureGetHandle(guiColorAttachment);
   rayGenData->fbSize = fbSize;
+  rayGenData->moveOrigin = false;
   rayGenData->world = gprtAccelGetHandle(world);
   rayGenData->partTrees = gprtBufferGetHandle(partTree_buffer);
   rayGenData->aabbMin = float3(bbox.first.x, bbox.first.y, bbox.first.z);
@@ -386,6 +389,11 @@ int main(int argc, char** argv) {
       }
       gprtTextureUnmap(colormap);
       rayGenData->frameID = 1;
+    }
+
+    static bool moveOrigin = rayGenData->moveOrigin;
+    if (ImGui::Checkbox("Move Origin", &moveOrigin)) {
+      rayGenData->moveOrigin = moveOrigin;
     }
 
     static float unit = 1000.f;
@@ -520,11 +528,6 @@ int main(int argc, char** argv) {
 
     if (volVisData) *volVisData = *rayGenData;
     gprtBuildShaderBindingTable(context, GPRT_SBT_RAYGEN);
-
-    // Set our ImGui state
-    // bool show_demo_window = true;
-    // if (show_demo_window)
-    //   ImGui::ShowDemoWindow(&show_demo_window);
 
     static int choice = 0;
     ImGui::RadioButton("Show Surfaces", &choice, 0);
