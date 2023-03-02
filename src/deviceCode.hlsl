@@ -37,12 +37,12 @@ float4 over(float4 a, float4 b) {
   return result;
 }
 
-struct Payload
+struct [raypayload] Payload
 {
-  int2 vol_ids;
-  int surf_id;
-  float hitDistance;
-  int next_vol;
+  int2 vol_ids       : read(caller) : write(miss, closesthit);
+  int surf_id        : read(caller) : write(closesthit);
+  float hitDistance  : read(caller) : write(closesthit);
+  int next_vol       : read(caller) : write(closesthit);
 };
 
 GPRT_RAYGEN_PROGRAM(DPRayGen, (RayGenData, record))

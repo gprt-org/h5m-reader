@@ -35,7 +35,8 @@ extern GPRTProgram dbl_deviceCode;
 void render();
 
 // initial image resolution
-const int2 fbSize = {2560, 1440};
+// const int2 fbSize = {2560, 1440};
+const int2 fbSize = {1000, 1000};
 
 int main(int argc, char** argv) {
 
@@ -198,7 +199,7 @@ int main(int argc, char** argv) {
       if (vol_geoms.second.size() == 0) continue;
       blas_map[vol_geoms.first] = blass.size();
       blass.push_back(gprtTrianglesAccelCreate(context, vol_geoms.second.size(), vol_geoms.second.data()));
-      gprtAccelBuild(context, blass.back());
+      gprtAccelBuild(context, blass.back(), GPRT_BUILD_MODE_FAST_TRACE_NO_UPDATE);
     }
   } else {
     DPTriSurfs = setup_surfaces<DPTriangleSurface, DPTriangleData>(context, dag, DPTriangleType, volumes);
@@ -215,7 +216,7 @@ int main(int argc, char** argv) {
       if (vol_geoms.second.size() == 0 ) continue;
       blas_map[vol_geoms.first] = blass.size();
       blass.push_back(gprtAABBAccelCreate(context, vol_geoms.second.size(), vol_geoms.second.data()));
-      gprtAccelBuild(context, blass.back());
+      gprtAccelBuild(context, blass.back(), GPRT_BUILD_MODE_FAST_TRACE_NO_UPDATE);
     }
   }
 
@@ -266,13 +267,13 @@ int main(int argc, char** argv) {
 
   // create one world tree from all of the volume BLAS's
   GPRTAccel world = gprtInstanceAccelCreate(context, blass.size(), blass.data());
-  gprtAccelBuild(context, world);
+  gprtAccelBuild(context, world, GPRT_BUILD_MODE_FAST_TRACE_NO_UPDATE);
 
   // build a TLAS for each volume
   std::vector<GPRTAccel> tlass;
   for (int i = 0; i < blass.size(); i++) {
     tlass.push_back(gprtInstanceAccelCreate(context, 1, blass.data() + i));
-    gprtAccelBuild(context, tlass.back());
+    gprtAccelBuild(context, tlass.back(), GPRT_BUILD_MODE_FAST_TRACE_NO_UPDATE);
   }
 
   // get acceleration data structures to be mapped to device
