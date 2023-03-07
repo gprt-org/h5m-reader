@@ -57,7 +57,7 @@ int main(int argc, char** argv) {
       .help("number of voxels per grid dimension")
       .nargs(3)
       .scan<'i', uint32_t>()
-      .default_value(std::vector<uint32_t>(3, 100));
+      .default_value(std::vector<uint32_t>(3, 256));
 
   try {
     args.parse_args(argc, argv);

@@ -23,6 +23,50 @@
 #include "sharedCode.h"
 #include "gprt.h"
 #include "rng.h"
+#include "dda.hlsli"
+
+struct Tracker {
+  gprt::Texture colormap;
+  gprt::Texture sampler;
+  gprt::Buffer grid;
+  uint3 dimensions;
+
+  int maxVolID;
+  int complementID;
+  int graveyardID;
+
+  // The color output that will be modified
+  float4 color;
+
+  // This lambda will be called for every intersected cell during DDA
+  bool lambda(RayDesc ray, int3 cell, float t0, float t1) {
+    Texture1D cmap = gprt::getTexture1DHandle(colormap);
+    SamplerState cmapSampler = gprt::getSamplerHandle(sampler);
+
+    int cellID = int(gprt::load<float>(
+      grid, cell.x + cell.y * dimensions.x + cell.z * dimensions.x * dimensions.y
+    ));
+
+    // float4 cellColor;
+
+    // skip to the next cell
+    if (cellID == complementID) return true;
+
+    // // skip to next cell
+    if (cellID == graveyardID) return true;
+
+    float dataValue = float(cellID.x) / float(maxVolID);
+    float4 xf = cmap.SampleGrad(cmapSampler, dataValue, 0.f, 0.f);
+
+    if (xf.w != 0.f) {
+      color = over(color, xf);
+      if (color.a > .99) return false; // terminate DDA
+    }
+
+    // continue onto the next cell.
+    return true;
+  }
+};
 
 GPRT_RAYGEN_PROGRAM(DPRayGen, (RayGenData, record))
 {
@@ -106,32 +150,44 @@ GPRT_RAYGEN_PROGRAM(SPRayGen, (RayGenData, record))
   Texture1D surfaceColormap = gprt::getTexture1DHandle(record.surfaceColormap);
   SamplerState sampler = gprt::getSamplerHandle(record.colormapSampler);
 
+  Tracker tracker;
+  tracker.colormap = record.ddaColormap;
+  tracker.sampler = record.colormapSampler;
+  tracker.grid = record.ddaGrid;
+  tracker.dimensions = record.gridDims;
+  tracker.maxVolID = record.maxVolID;
+  tracker.complementID = record.complementID;
+  tracker.graveyardID = record.graveyardID;
+
+  tracker.color = float4(0.f, 0.f, 0.f, 0.f);
+
   float nudge = 0.000;
 
   if (all(pixelID == centerID)) printf("Tracing...");
 
+  float previousT;
   for (int i = 0; i < MAX_DEPTH; ++i) {
+    TraceRay(
+      world, // the tree
+      RAY_FLAG_CULL_FRONT_FACING_TRIANGLES, // RAY_FLAG_CULL_BACK_FACING_TRIANGLES, // ray flags
+      0xff, // instance inclusion mask
+      0, // ray type
+      1, // number of ray types
+      0, // miss type
+      rayDesc, // the ray to trace
+      payload // the payload IO
+    );
 
-  TraceRay(
-    world, // the tree
-    RAY_FLAG_CULL_FRONT_FACING_TRIANGLES, // RAY_FLAG_CULL_BACK_FACING_TRIANGLES, // ray flags
-    0xff, // instance inclusion mask
-    0, // ray type
-    1, // number of ray types
-    0, // miss type
-    rayDesc, // the ray to trace
-    payload // the payload IO
-  );
-
-  // MESSAGE(centerID.x, centerID.y, "Next vol: %i", payload.next_vol);
-  if (all(pixelID == centerID)) {
-    printf("Center: hit surface %i. Next vol ID is %i", payload.surf_id, payload.vol_ids.x);
-    printf("Next vol idx: %i", payload.next_vol);
-    printf("Distance: %f", payload.hitDistance);
-  }
+    // MESSAGE(centerID.x, centerID.y, "Next vol: %i", payload.next_vol);
+    if (all(pixelID == centerID)) {
+      printf("Center: hit surface %i. Next vol ID is %i", payload.surf_id, payload.vol_ids.x);
+      printf("Next vol idx: %i", payload.next_vol);
+      printf("Distance: %f", payload.hitDistance);
+    }
 
     // float3 color = normalize(float3(Random(payload.vol_ids.x), Random(payload.vol_ids.x + 1), Random(payload.vol_ids.x + 1)));
 
+    // hit background 
     if (payload.vol_ids.y == -2) {
       color = over(color, float4(0.0f, 0.0f, 0.0f, 1.0f));
       break;
@@ -171,6 +227,17 @@ GPRT_RAYGEN_PROGRAM(SPRayGen, (RayGenData, record))
         color = over(color, xf);
         if (color.a > .99) break;
       }
+
+      // Test out DDA. Traverse cells between the chord here
+      RayDesc ddaRay;
+      ddaRay.Origin = worldPosToGrid(rayDesc.Origin, record.aabbMin, record.aabbMax, tracker.dimensions);
+      ddaRay.Direction = worldDirToGrid(rayDesc.Direction, record.aabbMin, record.aabbMax, tracker.dimensions);
+      ddaRay.TMin = rayDesc.TMin;
+      ddaRay.TMax = payload.hitDistance;
+
+      tracker.color = color;
+      dda3(ddaRay, tracker.dimensions, false, tracker);
+      color = tracker.color;
 
       if (record.moveOrigin)
         rayDesc.Origin = rayDesc.Origin + rayDesc.Direction * (payload.hitDistance + nudge);
