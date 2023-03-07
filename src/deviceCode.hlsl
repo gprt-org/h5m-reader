@@ -24,27 +24,6 @@
 #include "gprt.h"
 #include "rng.h"
 
-#define MAX_DEPTH 100
-
-#define EPSILON 2.2204460492503130808472633361816E-16
-#define FLT_EPSILON	1.19209290e-7F
-#define DBL_EPSILON	2.2204460492503131e-16
-
-float4 over(float4 a, float4 b) {
-  float4 result;
-  result.a = a.a + b.a * (1.f - a.a);
-  result.rgb = (a.rgb * a.a + b.rgb * b.a * (1.f - a.a)) / result.a;
-  return result;
-}
-
-struct [raypayload] Payload
-{
-  int2 vol_ids       : read(caller) : write(miss, closesthit);
-  int surf_id        : read(caller) : write(closesthit);
-  float hitDistance  : read(caller) : write(closesthit);
-  int next_vol       : read(caller) : write(closesthit);
-};
-
 GPRT_RAYGEN_PROGRAM(DPRayGen, (RayGenData, record))
 {
   Payload payload;
@@ -644,15 +623,15 @@ GPRT_CLOSEST_HIT_PROGRAM(SPTriangle, (SPTriangleData, record), (Payload, payload
     payload.vol_ids.x = record.vols[1]; // moving out of this volume
     payload.vol_ids.y = record.vols[0]; // moving into this volume
     payload.next_vol = record.ff_vol; // moving into the frontface volume
-    uint2 pixelID = DispatchRaysIndex().xy;
-    uint2 centerID = DispatchRaysDimensions().xy / 2;
-    if (all(pixelID == centerID)) {
-      // printf("Index of next volume BLAS %i", payload.next_vol);
-      // printf("Going from volume %i into volume %i, ", payload.vol_ids.x, payload.vol_ids.y);
-      printf("\nSurface ID: %i \n"
-      "Geom Data Vols: {%i, %i}\n"
-      "Index of next volume BLAS %i\n", record.id, record.vols[1], record.vols[0], record.ff_vol);
-    }
+    // uint2 pixelID = DispatchRaysIndex().xy;
+    // uint2 centerID = DispatchRaysDimensions().xy / 2;
+    // if (all(pixelID == centerID)) {
+    //   // printf("Index of next volume BLAS %i", payload.next_vol);
+    //   // printf("Going from volume %i into volume %i, ", payload.vol_ids.x, payload.vol_ids.y);
+    //   printf("\nSurface ID: %i \n"
+    //   "Geom Data Vols: {%i, %i}\n"
+    //   "Index of next volume BLAS %i\n", record.id, record.vols[1], record.vols[0], record.ff_vol);
+    // }
   }
   payload.hitDistance = RayTCurrent();
 }

@@ -29,6 +29,7 @@
   std::cout << GPRT_TERMINAL_DEFAULT;
 
 extern GPRTProgram dbl_deviceCode;
+extern GPRTProgram voxelize_deviceCode;
 
 #define MOAB_CHECK_ERROR(EC) if (EC != moab::MB_SUCCESS) return 1;
 
@@ -138,6 +139,7 @@ int main(int argc, char** argv) {
   gprtRequestWindow(fbSize.x, fbSize.y, "H5M");
   GPRTContext context = gprtContextCreate(nullptr, 1);
   GPRTModule module = gprtModuleCreate(context, dbl_deviceCode);
+  GPRTModule voxelizeModule = gprtModuleCreate(context, voxelize_deviceCode);
   // -------------------------------------------------------
   // Setup programs and geometry types
   // -------------------------------------------------------
@@ -154,15 +156,21 @@ int main(int argc, char** argv) {
   auto SPTriangleType = gprtGeomTypeCreate<SPTriangleData>(context, GPRT_TRIANGLES);
   gprtGeomTypeSetClosestHitProg(SPTriangleType,0, module,"SPTriangle");
 
+  // To test DDA and point queries, to voxelize parts
+  GPRTRayGenOf<RayGenData> Voxelize;
+
   // For launching double precision rays
   GPRTRayGenOf<RayGenData> DPRayGen = nullptr;
   if (!useFloats) DPRayGen = gprtRayGenCreate<RayGenData>(context, module, "DPRayGen");
+  if (!useFloats) Voxelize = gprtRayGenCreate<RayGenData>(context, voxelizeModule, "DPVoxelize");
 
   // For launching single precision rays
   GPRTRayGenOf<RayGenData> SPRayGen = nullptr;
   GPRTRayGenOf<RayGenData> SPVolVis = nullptr;
   if (useFloats) SPRayGen = gprtRayGenCreate<RayGenData>(context, module, "SPRayGen");
   if (useFloats) SPVolVis = gprtRayGenCreate<RayGenData>(context, module, "SPVolVis");
+  if (useFloats) Voxelize = gprtRayGenCreate<RayGenData>(context, voxelizeModule, "SPVoxelize");
+  
 
   // What to do if a ray misses
   GPRTMissOf<MissProgData> miss
@@ -327,6 +335,7 @@ int main(int argc, char** argv) {
   GPRTBufferOf<double> doubleRayBuffer = nullptr;
   RayGenData* rayGenData = nullptr;
   RayGenData* volVisData = nullptr;
+  RayGenData* voxelizeData = gprtRayGenGetParameters(Voxelize);
   if (useFloats) {
     rayGenData = gprtRayGenGetParameters(SPRayGen);
     volVisData = gprtRayGenGetParameters(SPVolVis);
@@ -366,8 +375,12 @@ int main(int argc, char** argv) {
   rayGenData->gridDims = gridDims;
 
   if (volVisData) *volVisData = *rayGenData;
+  *voxelizeData = *rayGenData;
 
   gprtBuildShaderBindingTable(context, GPRT_SBT_ALL);
+
+  // Voxelize into DDA grid
+  gprtRayGenLaunch3D(context, Voxelize, gridDims.x, gridDims.y, gridDims.z);
 
   // ##################################################################
   // now that everything is ready: launch it ....
@@ -599,6 +612,7 @@ int main(int argc, char** argv) {
   if (SPRayGen) gprtRayGenDestroy(SPRayGen);
   if (SPVolVis) gprtRayGenDestroy(SPVolVis);
   if (DPRayGen) gprtRayGenDestroy(DPRayGen);
+  gprtRayGenDestroy(Voxelize);
   // if (DPRayGen) gprtRayGenDestroy(DPRayGen);
   gprtMissDestroy(miss);
   for (auto& blas : blass) gprtAccelDestroy(blas);
@@ -614,6 +628,7 @@ int main(int argc, char** argv) {
   gprtGeomTypeDestroy(DPTriangleType);
   gprtGeomTypeDestroy(SPTriangleType);
   gprtModuleDestroy(module);
+  gprtModuleDestroy(voxelizeModule);
   gprtContextDestroy(context);
 
   LOG_OK("seems all went OK; app is done, this should be the last output ...");

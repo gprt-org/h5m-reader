@@ -106,3 +106,30 @@ struct MissProgData
   alignas(16) float3  color0;
   alignas(16) float3  color1;
 };
+
+#ifdef GPRT_DEVICE
+
+#define MAX_DEPTH 100
+
+#define EPSILON 2.2204460492503130808472633361816E-16
+#define FLT_EPSILON	1.19209290e-7F
+#define DBL_EPSILON	2.2204460492503131e-16
+
+float4 over(float4 a, float4 b) {
+  float4 result;
+  result.a = a.a + b.a * (1.f - a.a);
+  result.rgb = (a.rgb * a.a + b.rgb * b.a * (1.f - a.a)) / result.a;
+  return result;
+}
+
+struct [raypayload] Payload
+{
+  // .x = moving out of / escaping from that volume
+  // .y = moving into that volume
+  int2 vol_ids       : read(caller) : write(miss, closesthit);
+  int surf_id        : read(caller) : write(closesthit);
+  float hitDistance  : read(caller) : write(closesthit);
+  int next_vol       : read(caller) : write(closesthit);
+};
+
+#endif
