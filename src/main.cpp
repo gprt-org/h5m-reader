@@ -323,8 +323,11 @@ int main(int argc, char** argv) {
       context, GPRT_IMAGE_TYPE_2D, GPRT_FORMAT_D32_SFLOAT, fbSize.x, fbSize.y, 1, false, nullptr);
   gprtGuiSetRasterAttachments(context, guiColorAttachment, guiDepthAttachment);
 
-  // Colormap for visualization
-  auto colormap = gprtDeviceTextureCreate<uint32_t>(
+  // Colormaps for visualization
+  auto surfaceColormap = gprtDeviceTextureCreate<uint32_t>(
+    context, GPRT_IMAGE_TYPE_1D, GPRT_FORMAT_R8G8B8A8_SRGB, 256, 1, 1, false, nullptr
+  );
+  auto ddaColormap = gprtDeviceTextureCreate<uint32_t>(
     context, GPRT_IMAGE_TYPE_1D, GPRT_FORMAT_R8G8B8A8_SRGB, 256, 1, 1, false, nullptr
   );
 
@@ -364,7 +367,8 @@ int main(int argc, char** argv) {
   rayGenData->aabbMin = float3(bbox.first.x, bbox.first.y, bbox.first.z);
   rayGenData->aabbMax = float3(bbox.second.x, bbox.second.y, bbox.second.z);
   rayGenData->unit = 1000.f;
-  rayGenData->colormap = gprtTextureGetHandle(colormap);
+  rayGenData->surfaceColormap = gprtTextureGetHandle(surfaceColormap);
+  rayGenData->ddaColormap = gprtTextureGetHandle(ddaColormap);
   rayGenData->numVolumes = numVols;
   rayGenData->maxVolID = max_vol_id;
   rayGenData->graveyardID = graveyard_id;
@@ -388,7 +392,8 @@ int main(int argc, char** argv) {
 
   LOG("launching ...");
 
-  ImGG::GradientWidget gradient_widget{};
+  ImGG::GradientWidget surfaceColormapWidget{};
+  ImGG::GradientWidget ddaColormapWidget{};
 
   bool firstFrame = true;
   double xpos = 0.f, ypos = 0.f;
@@ -400,7 +405,7 @@ int main(int argc, char** argv) {
 
     rayGenData->frameID++;
 
-    if (gradient_widget.widget("My Gradient") || firstFrame) {
+    if (surfaceColormapWidget.widget("Surface Colormap") || firstFrame) {
       auto make_8bit = [](const float f) -> uint32_t {
         return std::min(255, std::max(0, int(f * 256.f)));
       };
@@ -411,13 +416,34 @@ int main(int argc, char** argv) {
         return (make_8bit(color.x) << 0) + (make_8bit(color.y) << 8) + (make_8bit(color.z) << 16) + (make_8bit(color.w) << 24);
       };
 
-      gprtTextureMap(colormap);
-      uint32_t *ptr = gprtTextureGetPointer(colormap);
+      gprtTextureMap(surfaceColormap);
+      uint32_t *ptr = gprtTextureGetPointer(surfaceColormap);
       for (uint32_t i = 0; i < 256; ++i) {
-        auto result = gradient_widget.gradient().at(ImGG::RelativePosition(float(i + 1) / 256.f));
+        auto result = surfaceColormapWidget.gradient().at(ImGG::RelativePosition(float(i + 1) / 256.f));
         ptr[i] = make_rgba(float4(result.x, result.y, result.z, result.w));
       }
-      gprtTextureUnmap(colormap);
+      gprtTextureUnmap(surfaceColormap);
+      rayGenData->frameID = 1;
+    }
+
+    if (ddaColormapWidget.widget("Grid Colormap") || firstFrame) {
+      auto make_8bit = [](const float f) -> uint32_t {
+        return std::min(255, std::max(0, int(f * 256.f)));
+      };
+
+      auto make_rgba = [make_8bit](float4 color) -> uint32_t {
+        float gamma = 2.2;
+        color = pow(color, float4(1.0f / gamma, 1.0f / gamma, 1.0f / gamma, 1.0f));
+        return (make_8bit(color.x) << 0) + (make_8bit(color.y) << 8) + (make_8bit(color.z) << 16) + (make_8bit(color.w) << 24);
+      };
+
+      gprtTextureMap(ddaColormap);
+      uint32_t *ptr = gprtTextureGetPointer(ddaColormap);
+      for (uint32_t i = 0; i < 256; ++i) {
+        auto result = ddaColormapWidget.gradient().at(ImGG::RelativePosition(float(i + 1) / 256.f));
+        ptr[i] = make_rgba(float4(result.x, result.y, result.z, result.w));
+      }
+      gprtTextureUnmap(ddaColormap);
       rayGenData->frameID = 1;
     }
 

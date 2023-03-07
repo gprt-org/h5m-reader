@@ -76,7 +76,8 @@ struct RayGenData
   alignas(4) uint32_t graveyardID;
   alignas(4) uint32_t complementID;
   // colormap for visualization
-  alignas(16) gprt::Texture colormap;
+  alignas(16) gprt::Texture surfaceColormap;
+  alignas(16) gprt::Texture ddaColormap;
   alignas(16) gprt::Sampler colormapSampler;
 
   alignas(8) int2 fbSize;

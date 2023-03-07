@@ -103,7 +103,7 @@ GPRT_RAYGEN_PROGRAM(SPRayGen, (RayGenData, record))
 
   uint32_t maxVolID = record.maxVolID;
 
-  Texture1D colormap = gprt::getTexture1DHandle(record.colormap);
+  Texture1D surfaceColormap = gprt::getTexture1DHandle(record.surfaceColormap);
   SamplerState sampler = gprt::getSamplerHandle(record.colormapSampler);
 
   float nudge = 0.000;
@@ -165,7 +165,7 @@ GPRT_RAYGEN_PROGRAM(SPRayGen, (RayGenData, record))
 
     else {
       float dataValue = float(payload.vol_ids.x) / float(maxVolID);
-      float4 xf = colormap.SampleGrad(sampler, dataValue, 0.f, 0.f);
+      float4 xf = surfaceColormap.SampleGrad(sampler, dataValue, 0.f, 0.f);
 
       if (xf.w != 0.f) {
         color = over(color, xf);
@@ -298,7 +298,7 @@ GPRT_RAYGEN_PROGRAM(SPVolVis, (RayGenData, record))
     uint32_t numVolumes = record.numVolumes;
     uint32_t maxVolID = record.maxVolID;
 
-    Texture1D colormap = gprt::getTexture1DHandle(record.colormap);
+    Texture1D surfaceColormap = gprt::getTexture1DHandle(record.surfaceColormap);
     SamplerState sampler = gprt::getSamplerHandle(record.colormapSampler);
 
     // while (true) {
@@ -320,7 +320,7 @@ GPRT_RAYGEN_PROGRAM(SPVolVis, (RayGenData, record))
       if (dataValue == float(record.graveyardID)) continue;
 
       dataValue = dataValue / float(maxVolID);
-      float4 xf = colormap.SampleGrad(sampler, dataValue, 0.f, 0.f);
+      float4 xf = surfaceColormap.SampleGrad(sampler, dataValue, 0.f, 0.f);
       //   float remapped1 = (dataValue - volDomain.lower) / (volDomain.upper - volDomain.lower);
       //   float remapped2 = (remapped1 - xfDomain.lower) / (xfDomain.upper - xfDomain.lower);
       //   xf = tex2D<float4>(lp.transferFunc.texture,remapped2,0.5f);
