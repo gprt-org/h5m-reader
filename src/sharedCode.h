@@ -86,6 +86,9 @@ struct RayGenData
   alignas(16) gprt::Accel world;
   alignas(16) gprt::Buffer partTrees; // gprt::Accel*
 
+  alignas(16) gprt::Buffer ddaGrid;
+  alignas(16) uint3 gridDims;
+
   alignas(16) float3 aabbMin;
   alignas(16) float3 aabbMax;
 

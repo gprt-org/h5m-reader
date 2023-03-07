@@ -52,6 +52,12 @@ int main(int argc, char** argv) {
       .help("Floating point primitive representation (one of 'float' or 'double'")
       .default_value(std::string("float"));
 
+  args.add_argument("--grid")
+      .help("number of voxels per grid dimension")
+      .nargs(3)
+      .scan<'i', uint32_t>()
+      .default_value(std::vector<uint32_t>(3, 100));
+
   try {
     args.parse_args(argc, argv);
   }
@@ -70,6 +76,9 @@ int main(int argc, char** argv) {
     std::cerr << "Error: primitive representation must be set to either 'float' or 'double'." << std::endl;
     std::exit(1);
   }
+
+  std::vector<uint32_t> _gridDims = args.get<std::vector<uint32_t>>("grid");
+  uint3 gridDims = {_gridDims[0], _gridDims[1], _gridDims[2]};
 
   moab::ErrorCode rval;
   std::shared_ptr<moab::DagMC> dag = std::make_shared<moab::DagMC>();
@@ -258,6 +267,7 @@ int main(int argc, char** argv) {
       }
     }
   }
+  
   double3 aabbCentroid = bbox.first + (bbox.second - bbox.first) * 0.5;
 
   float3 lookFrom = float3(float(aabbCentroid.x), float(aabbCentroid.y)  - 100.f, float(aabbCentroid.z));
@@ -283,6 +293,10 @@ int main(int argc, char** argv) {
   }
 
   auto partTree_buffer = gprtDeviceBufferCreate<gprt::Accel>(context, accel_ptrs.size(), accel_ptrs.data());
+
+  // Allocate a grid for DDA to hold physics kernel results
+  auto ddaGrid = gprtDeviceBufferCreate<float>(context, gridDims.x * gridDims.y * gridDims.z);
+  gprtBufferClear(ddaGrid);
 
   // ----------- set variables  ----------------------------
   auto missData = gprtMissGetParameters(miss);
@@ -348,6 +362,8 @@ int main(int argc, char** argv) {
   rayGenData->complementID = implicit_complement_id;
   rayGenData->frameID = 0;
   rayGenData->colormapSampler = gprtSamplerGetHandle(sampler);
+  rayGenData->ddaGrid = gprtBufferGetHandle(ddaGrid);
+  rayGenData->gridDims = gridDims;
 
   if (volVisData) *volVisData = *rayGenData;
 
