@@ -12,7 +12,6 @@ using namespace moab;
 
 int DEBUG_SURF = -4;
 
-std::unordered_map<EntityHandle, float3> volume_colors;
 std::set<EntityHandle> visible_surfs;
 
 float3 rnd_color() {
@@ -184,42 +183,6 @@ struct MBTriangleSurface {
 
 using SPTriangleSurface = MBTriangleSurface<SPTriangleData, float3>;
 using DPTriangleSurface = MBTriangleSurface<DPTriangleData, double3>;
-
-void create_volume_colors(Interface* mbi, std::vector<int> vol_ids = {}) {
-  ErrorCode rval;
-
-  Tag dim_tag;
-  rval = mbi->tag_get_handle(GEOM_DIMENSION_TAG_NAME, dim_tag);
-  MB_CHK_SET_ERR_CONT(rval, "Failed to get the geom dim tag");
-  int dim = 3;
-  const Tag tags[] = {dim_tag};
-  const void* const vals[] = {&dim};
-
-  Range vol_sets;
-  rval = mbi->get_entities_by_type_and_tag(0, MBENTITYSET, tags, vals, 1, vol_sets);
-  MB_CHK_SET_ERR_CONT(rval, "Failed to get surface sets");
-
-  for (auto vol_set : vol_sets) { volume_colors[vol_set] = rnd_color(); }
-
-  volume_colors[-1] = rnd_color();
-
-  Tag id_tag = mbi->globalId_tag();
-
-  for (auto vol_set : vol_sets) {
-
-    int vol_id;
-    rval = mbi->tag_get_data(id_tag, &vol_set, 1, &vol_id);
-    MB_CHK_SET_ERR_CONT(rval, "Failed to get volume ID");
-
-    if (vol_ids.size() > 0 && std::find(vol_ids.begin(), vol_ids.end(), vol_id) == vol_ids.end()) continue;
-
-    Range surf_sets;
-    rval = mbi->get_child_meshsets(vol_set, surf_sets);
-    MB_CHK_SET_ERR_CONT(rval, "Failed to get child sets");
-
-    for (auto surf_set : surf_sets) { visible_surfs.insert(surf_set); }
-  }
-}
 
 template<class T, class G>
 std::map<int, std::vector<T>> setup_surfaces(GPRTContext context, std::shared_ptr<moab::DagMC> dag, GPRTGeomTypeOf<G> g_type, std::vector<int> visible_vol_ids = {}) {

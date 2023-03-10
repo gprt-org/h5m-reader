@@ -52,7 +52,10 @@ int main(int argc, char** argv) {
   args.add_argument("--type")
       .help("Floating point primitive representation (one of 'float' or 'double'")
       .default_value(std::string("float"));
-
+  args.add_argument("--write")
+      .help("Write out the DAGMC file as rendered using GPRT in this app")
+      .default_value(false)
+      .implicit_value(true);
   args.add_argument("--grid")
       .help("number of voxels per grid dimension")
       .nargs(3)
@@ -86,11 +89,8 @@ int main(int argc, char** argv) {
 
   auto mbi = dag->moab_instance_sptr();
 
-  std::cout << "Loading " << filename << "..." << std::endl;
   rval = dag->load_file(filename.c_str());
   MOAB_CHECK_ERROR(rval);
-
-  std::cout << "SPTriangleData size: " << sizeof(SPTriangleData) << std::endl;
 
   rval = dag->setup_indices();
   MOAB_CHECK_ERROR(rval);
@@ -105,8 +105,10 @@ int main(int argc, char** argv) {
   }
 
   // write geometry as-rendered for verification
-  std::string file_out{"as-is.h5m"};
-  dag->write_mesh(file_out.c_str(), file_out.size());
+  if (args.get<bool>("write")) {
+    std::string file_out{"as-is.h5m"};
+    dag->write_mesh(file_out.c_str(), file_out.size());
+  }
 
   // get the graveyard group
   EntityHandle graveyard_group;
@@ -154,7 +156,7 @@ int main(int argc, char** argv) {
 
   // For single precision triangles
   auto SPTriangleType = gprtGeomTypeCreate<SPTriangleData>(context, GPRT_TRIANGLES);
-  gprtGeomTypeSetClosestHitProg(SPTriangleType,0, module,"SPTriangle");
+  gprtGeomTypeSetClosestHitProg(SPTriangleType,0, module, "SPTriangle");
 
   // To test DDA and point queries, to voxelize parts
   GPRTRayGenOf<RayGenData> Voxelize;
@@ -170,14 +172,10 @@ int main(int argc, char** argv) {
   if (useFloats) SPRayGen = gprtRayGenCreate<RayGenData>(context, module, "SPRayGen");
   if (useFloats) SPVolVis = gprtRayGenCreate<RayGenData>(context, module, "SPVolVis");
   if (useFloats) Voxelize = gprtRayGenCreate<RayGenData>(context, voxelizeModule, "SPVoxelize");
-  
 
   // What to do if a ray misses
   GPRTMissOf<MissProgData> miss
     = gprtMissCreate<MissProgData>(context,module,"miss");
-
-  // create colors for each volume
-  create_volume_colors(mbi.get(), volumes);
 
   // compute centroid to look at
   auto bbox = bounding_box(mbi.get());
@@ -203,6 +201,7 @@ int main(int argc, char** argv) {
     // create the triangle surfaces for each volume, stored in a map of vol_id to vector of surface objects
     SPTriSurfs = setup_surfaces<SPTriangleSurface, SPTriangleData>(context, dag, SPTriangleType, volumes);
 
+    // map volumes to geometries
     for (auto& vol_surfs : SPTriSurfs) {
       SPgeoms[vol_surfs.first] = {};
       for (auto& ts : vol_surfs.second) {
@@ -211,7 +210,7 @@ int main(int argc, char** argv) {
       }
     }
 
-    // build a BLAS for each volume
+    // build a BLAS for each each volume containing all of its surface geometries
     for (auto& vol_geoms : SPgeoms) {
       if (vol_geoms.second.size() == 0) continue;
       blas_map[vol_geoms.first] = blass.size();
@@ -247,7 +246,7 @@ int main(int argc, char** argv) {
     std::exit(1);
   }
 
-  // set the acceleration data structures for surfaces
+  // now map surfaces to volumes
   if (useFloats) {
     for (auto& v : SPTriSurfs) {
       for (auto& s : v.second) {
@@ -275,7 +274,7 @@ int main(int argc, char** argv) {
       }
     }
   }
-  
+
   double3 aabbCentroid = bbox.first + (bbox.second - bbox.first) * 0.5;
 
   float3 lookFrom = float3(float(aabbCentroid.x), float(aabbCentroid.y)  - 100.f, float(aabbCentroid.z));
