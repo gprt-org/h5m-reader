@@ -31,12 +31,91 @@ struct MBTriangleSurface {
   GPRTBufferOf<uint3> conn_buffer;
   GPRTBufferOf<float3> aabb_buffer;
   GPRTGeomOf<T> triangle_geom_s;
+  int2 parent_ids;
   bool aabbs_present {false};
 
   struct SurfaceData {
     std::vector<double> coords;
     std::vector<uint3> connectivity;
   };
+
+MBTriangleSurface(DagMC* dagmc, EntityHandle surf_handle, EntityHandle vol_handle) {
+  ErrorCode rval;
+
+  moab::Interface* mbi = dagmc->moab_instance();
+
+  // keep surface and volume IDs for debugging
+  int surface_id = dagmc->get_entity_id(surf_handle);
+  int volume_id = dagmc->get_entity_id(vol_handle);
+
+
+  // get the triangles for this surface
+  std::vector<EntityHandle> surf_tris;
+  rval = mbi->get_entities_by_dimension(surf_handle, 2, surf_tris);
+  MB_CHK_SET_ERR_CONT(rval, "Failed to get surface " << surface_id << "'s triangles");
+
+  n_tris = surf_tris.size();
+
+  std::vector<EntityHandle> conn;
+  rval = mbi->get_connectivity(surf_tris.data(), surf_tris.size(), conn);
+  MB_CHK_SET_ERR_CONT(rval, "Failed to get surface connectivity");
+
+  Range verts;
+  verts.insert<std::vector<EntityHandle>>(conn.begin(), conn.end());
+
+  std::vector<double> coords(3*verts.size());
+
+  rval = mbi->get_coords(verts, coords.data());
+  MB_CHK_SET_ERR_CONT(rval, "Failed to get vertex coordinates for surface " << surface_id);
+
+  vertices.resize(3*verts.size());
+
+  for (int i = 0; i < verts.size(); i++) {
+      vertices[i] = R(coords[3*i], coords[3*i+1], coords[3*i+2]);
+  }
+
+  connectivity.resize(surf_tris.size());
+
+  for (int i = 0; i < surf_tris.size(); i++) {
+      connectivity[i] = uint3(verts.index(conn[3*i]), verts.index(conn[3*i+1]), verts.index(conn[3*i+2]));
+  }
+
+  // get the geom sense tag
+  Tag geom_sense;
+  const char GEOM_SENSE_2_TAG_NAME[] = "GEOM_SENSE_2";
+  rval = mbi->tag_get_handle(GEOM_SENSE_2_TAG_NAME, geom_sense);
+  MB_CHK_SET_ERR_CONT(rval, "Failed to get the geometry sense tag");
+
+  std::array<EntityHandle, 2> parent_vols;
+  rval = mbi->tag_get_data(geom_sense, &surf_handle, 1, parent_vols.data());
+  MB_CHK_SET_ERR_CONT(rval, "Failed to get the geometry sense of surface " << surface_id);
+
+  std::array<int, 2> parent_ids = {-1 , -1};
+  int parents_size = parent_vols[1] == 0 ? 1 : 2;
+  Tag id_tag = mbi->globalId_tag();
+  rval = mbi->tag_get_data(id_tag, parent_vols.data(), parents_size, parent_ids.data());
+  MB_CHK_SET_ERR_CONT(rval, "Failed to get parent volume IDs");
+
+  // if we're building up this surface and it has a reverse sense relative to the volume provided,
+  // flip the triangle normals by changing the triangle connectivity
+  bool sense_reverse = parent_ids[1] == volume_id;
+  id = sense_reverse ? -surface_id : surface_id;
+  if (sense_reverse) {
+    for (int i = 0; i < surf_tris.size(); i++) {
+      auto& conn = connectivity[i];
+      std::swap(conn[1], conn[2]);
+    }
+  }
+
+  // set forward/reverse volume information
+  if (sense_reverse) {
+    parent_ids[0] = parent_ids[1];
+    parent_ids[1] = parent_ids[0];
+  } else {
+    parent_ids[0] = parent_ids[0];
+    parent_ids[1] = parent_ids[1];
+  }
+}
 
   MBTriangleSurface(GPRTContext context, moab::Interface* mbi, GPRTGeomTypeOf<T> g_type, int surface_id, int vol_id=-1) {
     ErrorCode rval;
@@ -185,6 +264,75 @@ using SPTriangleSurface = MBTriangleSurface<SPTriangleData, float3>;
 using DPTriangleSurface = MBTriangleSurface<DPTriangleData, double3>;
 
 template<class T, class G>
+struct MBVolume {
+  // Constructor
+  MBVolume(int id) : id_(id) {};
+
+  // Methods
+  void populate_surfaces(DagMC* dagmc) {
+    EntityHandle vol = dagmc->entity_by_id(3, id_);
+
+    Range moab_surf_handles;
+    ErrorCode rval = dagmc->moab_instance()->get_child_meshsets(vol, moab_surf_handles);
+
+    for (auto surface_handle : moab_surf_handles)
+      MBTriangleSurface<T, float3> gprt_surface(dagmc, surface_handle, vol);
+
+  }
+
+  // Data members
+  int id_;
+  std::vector<T> surfaces_;
+  std::vector<G> gprt_geoms_;
+  GPRTAccel blas_;
+  GPRTAccel tlas_;
+};
+
+template<class T, class G>
+struct MBVolumes {
+  // Constructors
+  MBVolumes(std::vector<int> ids) {
+    for (auto id : ids) {
+      volumes().push_back(MBVolume<T, G>(id));
+    }
+  }
+
+  // Methods
+  void populate_surfaces(DagMC* dagmc) {
+    for (auto& volume : volumes()) {
+      volume.populate_surfaces(dagmc);
+    }
+  }
+
+  // TODO: specialize this step for single/double template parameters
+  void create_geoms(GPRTContext context) {
+
+  }
+
+  // Accessors
+  const auto& volumes() const { return volumes_; }
+  auto& volumes() { return volumes_; }
+
+  // Data members
+  std::vector<MBVolume<T, G>> volumes_;
+};
+
+template<class T>
+struct MBTriangleSurfaces {
+
+  // Data members
+  std::vector<T> surfaces_;
+  std::vector<GPRTAccel> blass_;
+};
+
+
+
+// Create an object that is a collection of SPTriangle surface objects and can
+//  - call any necessary methods for final setup (set_buffers, aabbs, etc.)
+//  - create it's own BLAS for all surfaces in the container
+
+// TLAS creation and index mapping into the TLAS should be able to occur on each of these containers
+template<class T, class G>
 std::map<int, std::vector<T>> setup_surfaces(GPRTContext context, std::shared_ptr<moab::DagMC> dag, GPRTGeomTypeOf<G> g_type, std::vector<int> visible_vol_ids = {}) {
     ErrorCode rval;
 
@@ -209,6 +357,12 @@ std::map<int, std::vector<T>> setup_surfaces(GPRTContext context, std::shared_pt
       dag->moab_instance()->get_entities_by_type(gyg, MBENTITYSET, gys);
 //      visible_vol_ids.push_back(dag->get_entity_id(gys[0]));
     }
+
+    // create a volume object for every visible volume
+    MBVolumes<T, G> volumes(visible_vol_ids);
+
+    // populate the surfaces with their MOAB data
+    volumes.populate_surfaces(dag.get());
 
     std::map<int, std::vector<T>> out;
     for (auto vol_id : visible_vol_ids) {
