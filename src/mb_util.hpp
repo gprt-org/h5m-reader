@@ -21,6 +21,8 @@ float3 rnd_color() {
 template<class T, typename R>
 struct MBTriangleSurface {
 
+  typedef R vertex_type;
+
   int id;
   int n_tris;
   int frontface_vol;
@@ -277,13 +279,27 @@ struct MBVolume {
 
     for (auto surface_handle : moab_surf_handles)
       MBTriangleSurface<T, float3> gprt_surface(dagmc, surface_handle, vol);
+  }
 
+  // TODO: specialize based on template type eventually
+  void create_geoms(GPRTContext context, GPRTGeomTypeOf<G> g_type) {
+    for (auto& surf : surfaces_) {
+      vertex_buffers_.push_back(gprtDeviceBufferCreate<typename T::vertex_type>(context, surf.vertices.size(), surf.vertices.data()));
+      connectivity_buffers_.push_back(gprtDeviceBufferCreate<uint3>(context, surf.connectivity.size(), surf.connectivity.data()));
+      gprt_geoms_.push_back(gprtGeomCreate<G>(context, g_type));
+      G* geom_data = gprtGeomGetParameters(gprt_geoms_.back());
+      geom_data->vertex = gprtBufferGetHandle(vertex_buffers_.back());
+      geom_data->index = gprtBufferGetHandle(connectivity_buffers_.back());
+      geom_data->id = surf.id;
+    }
   }
 
   // Data members
   int id_;
   std::vector<T> surfaces_;
-  std::vector<G> gprt_geoms_;
+  std::vector<GPRTBufferOf<typename T::vertex_type>> vertex_buffers_;
+  std::vector<GPRTBufferOf<uint3>> connectivity_buffers_;
+  std::vector<GPRTGeomOf<G>> gprt_geoms_;
   GPRTAccel blas_;
   GPRTAccel tlas_;
 };
@@ -305,8 +321,10 @@ struct MBVolumes {
   }
 
   // TODO: specialize this step for single/double template parameters
-  void create_geoms(GPRTContext context) {
-
+  void create_geoms(GPRTContext context, GPRTGeomTypeOf<G> g_type) {
+    for (auto& volume : volumes()) {
+      volume.create_geoms(context, g_type);
+    }
   }
 
   // Accessors
@@ -355,14 +373,14 @@ std::map<int, std::vector<T>> setup_surfaces(GPRTContext context, std::shared_pt
       Range gys;
       dag->get_graveyard_group(gyg);
       dag->moab_instance()->get_entities_by_type(gyg, MBENTITYSET, gys);
-//      visible_vol_ids.push_back(dag->get_entity_id(gys[0]));
     }
 
     // create a volume object for every visible volume
     MBVolumes<T, G> volumes(visible_vol_ids);
-
     // populate the surfaces with their MOAB data
     volumes.populate_surfaces(dag.get());
+    // setup GPRT geometries and buffers
+    volumes.create_geoms(context, g_type);
 
     std::map<int, std::vector<T>> out;
     for (auto vol_id : visible_vol_ids) {
