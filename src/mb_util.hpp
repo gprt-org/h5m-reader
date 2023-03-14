@@ -151,13 +151,15 @@ struct MBVolume {
     }
   }
 
-  void setup(GPRTContext context, GPRTModule module, int2 fbSize) {
+  void setup(GPRTContext context, GPRTModule module) {
     for (int i = 0; i < surfaces_.size(); i++) {
       auto& surf = surfaces_[i];
       gprtTrianglesSetVertices(gprt_geoms_[i], vertex_buffers_[i], surf.vertices.size());
       gprtTrianglesSetIndices(gprt_geoms_[i], connectivity_buffers_[i], surf.connectivity.size());
     }
   }
+
+  void dbl_setup(int2 fbSize, GPRTBufferOf<double> dpray_buff) {}
 
   void create_accel_structures(GPRTContext context) {
     blas_ = gprtTrianglesAccelCreate(context, gprt_geoms_.size(), gprt_geoms_.data());
@@ -188,16 +190,12 @@ struct MBVolume {
 };
 
 template<>
-void MBVolume<DPTriangleSurface, DPTriangleData>::setup(GPRTContext context, GPRTModule module, int2 fbSize) {
+void MBVolume<DPTriangleSurface, DPTriangleData>::setup(GPRTContext context, GPRTModule module)
+{
   // populate AABB buffer
   for (int i = 0; i < surfaces_.size(); i++) {
     auto& surf = surfaces_[i];
     auto& geom = gprt_geoms_[i];
-
-    auto geom_data = gprtGeomGetParameters(geom);
-    geom_data->fbSize = fbSize;
-    // might need this too?
-    // dpGeomData->dpRays = gprtBufferGetHandle(doubleRayBuffer);
 
     surf.aabb_buffer = gprtDeviceBufferCreate<float3>(context, 2*surf.n_tris, nullptr);
     gprtAABBsSetPositions(geom, surf.aabb_buffer, surf.n_tris, 2*sizeof(float3), 0);
@@ -210,6 +208,25 @@ void MBVolume<DPTriangleSurface, DPTriangleData>::setup(GPRTContext context, GPR
     gprtComputeLaunch1D(context, boundsProg, surf.n_tris);
     surf.aabbs_present = true;
   }
+}
+
+template<>
+void MBVolume<DPTriangleSurface, DPTriangleData>::dbl_setup(int2 fbSize, GPRTBufferOf<double> dpray_buff)
+{
+  for (auto& geom : gprt_geoms_) {
+    auto geom_data = gprtGeomGetParameters(geom);
+    geom_data->fbSize = fbSize;
+    geom_data->dpRays = gprtBufferGetHandle(dpray_buff);
+  }
+}
+
+template<>
+void MBVolume<DPTriangleSurface, DPTriangleData>::create_accel_structures(GPRTContext context)
+{
+  blas_ = gprtAABBAccelCreate(context, gprt_geoms_.size(), gprt_geoms_.data());
+  gprtAccelBuild(context, blas_, GPRT_BUILD_MODE_FAST_TRACE_NO_UPDATE);
+  tlas_ = gprtInstanceAccelCreate(context, 1, &blas_);
+  gprtAccelBuild(context, tlas_, GPRT_BUILD_MODE_FAST_TRACE_NO_UPDATE);
 }
 
 template<class T, class G>
@@ -235,9 +252,15 @@ struct MBVolumes {
     }
   }
 
-  void setup(GPRTContext context, GPRTModule module, int2 fbSize) {
+  void setup(GPRTContext context, GPRTModule module) {
     for (auto& volume : volumes()) {
-      volume.setup(context, module, fbSize);
+      volume.setup(context, module);
+    }
+  }
+
+  void dbl_setup(int2 fbSize, GPRTBufferOf<double> dpray_buff) {
+    for (auto& volume : volumes()) {
+      volume.dbl_setup(fbSize, dpray_buff);
     }
   }
 

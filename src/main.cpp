@@ -192,16 +192,21 @@ int main(int argc, char** argv) {
   // create volumes
   MBVolumes<SPTriangleSurface, SPTriangleData> spvols(volumes);
   MBVolumes<DPTriangleSurface, DPTriangleData> dpvols(volumes);
+  GPRTBufferOf<double> doubleRayBuffer = nullptr;
 
   if (useFloats) {
     spvols.populate_surfaces(dag.get());
     spvols.create_geoms(context, SPTriangleType);
-    spvols.setup(context, module, fbSize);
+    spvols.setup(context, module);
     spvols.create_accel_structures(context);
   } else {
     dpvols.populate_surfaces(dag.get());
     dpvols.create_geoms(context, DPTriangleType);
-    dpvols.setup(context, module, fbSize);
+    dpvols.setup(context, module);
+
+    doubleRayBuffer = gprtDeviceBufferCreate<double>(context,fbSize.x*fbSize.y*8);
+    dpvols.dbl_setup(fbSize, doubleRayBuffer);
+
     dpvols.create_accel_structures(context);
   }
 
@@ -263,7 +268,6 @@ int main(int argc, char** argv) {
 
   // need this to communicate double precision rays to intersection program
   // ray origin xyz + tmin, then ray direction xyz + tmax
-  GPRTBufferOf<double> doubleRayBuffer = nullptr;
   RayGenData* rayGenData = nullptr;
   RayGenData* volVisData = nullptr;
   RayGenData* voxelizeData = gprtRayGenGetParameters(Voxelize);
@@ -274,7 +278,6 @@ int main(int argc, char** argv) {
   }
   else {
     rayGenData = gprtRayGenGetParameters(DPRayGen);
-    doubleRayBuffer = gprtDeviceBufferCreate<double>(context,fbSize.x*fbSize.y*8);
     rayGenData->dpRays = gprtBufferGetHandle(doubleRayBuffer);
   }
 
@@ -283,8 +286,13 @@ int main(int argc, char** argv) {
   rayGenData->guiTexture = gprtTextureGetHandle(guiColorAttachment);
   rayGenData->fbSize = fbSize;
   rayGenData->moveOrigin = false;
+  if (useFloats) {
   rayGenData->world = gprtAccelGetHandle(spvols.world_tlas_);
   rayGenData->partTrees = gprtBufferGetHandle(spvols.tlas_buffer_);
+  } else {
+  rayGenData->world = gprtAccelGetHandle(dpvols.world_tlas_);
+  rayGenData->partTrees = gprtBufferGetHandle(dpvols.tlas_buffer_);
+  }
   rayGenData->aabbMin = float3(bbox.first.x, bbox.first.y, bbox.first.z);
   rayGenData->aabbMax = float3(bbox.second.x, bbox.second.y, bbox.second.z);
   rayGenData->unit = 1000.f;
