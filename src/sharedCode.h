@@ -25,7 +25,7 @@
 /* variables for the triangle mesh geometry */
 struct DPTriangleData
 {
-#ifdef CPU_ONLY
+#ifdef GPRT_CPU_ONLY
   typedef double3 vertex_type;
 #endif
   /*! array/buffer of vertex indices */
@@ -49,7 +49,7 @@ struct DPTriangleData
 
 struct SPTriangleData
 {
-#ifdef CPU_ONLY
+#ifdef GPRT_CPU_ONLY
   typedef float3 vertex_type;
 #endif
   /*! array/buffer of vertex indices */

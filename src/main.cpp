@@ -12,7 +12,8 @@
 #include "moab/Range.hpp"
 
 #include "gprt.h"
-#define CPU_ONLY
+
+#define GPRT_CPU_ONLY
 #include "sharedCode.h"
 #include "mb_util.hpp"
 
