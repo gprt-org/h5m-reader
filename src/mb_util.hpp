@@ -29,8 +29,6 @@ struct MBTriangleSurface {
   int backface_vol;
   std::vector<R> vertices;
   std::vector<uint3> connectivity;
-  GPRTBufferOf<R> vertex_buffer_s;
-  GPRTBufferOf<uint3> conn_buffer;
   GPRTBufferOf<float3> aabb_buffer;
   GPRTGeomOf<T> triangle_geom_s;
   int2 parent_ids;
@@ -118,147 +116,7 @@ MBTriangleSurface(DagMC* dagmc, EntityHandle surf_handle, EntityHandle vol_handl
   }
 }
 
-  MBTriangleSurface(GPRTContext context, moab::Interface* mbi, GPRTGeomTypeOf<T> g_type, int surface_id, int vol_id=-1) {
-    ErrorCode rval;
 
-    // get this surface's handle
-    Tag dim_tag;
-    rval = mbi->tag_get_handle(GEOM_DIMENSION_TAG_NAME, dim_tag);
-    MB_CHK_SET_ERR_CONT(rval, "Failed to get the geom dim tag");
-
-    Tag id_tag = mbi->globalId_tag();
-
-    int dim = 2;
-    const Tag tags[] = {id_tag, dim_tag};
-    const void* const vals[] = {&surface_id, &dim};
-
-    Range surf_sets;
-    rval = mbi->get_entities_by_type_and_tag(0, MBENTITYSET, tags, vals, 2, surf_sets);
-    MB_CHK_SET_ERR_CONT(rval, "Failed to get surface with id " << surface_id);
-
-    if (surf_sets.size() != 1) {
-        std::cerr << "Incorrect number of surfaces found (" << surf_sets.size() << ") with ID " << surface_id << std::endl;
-        std::exit(1);
-    }
-
-    EntityHandle surf_handle = surf_sets[0];
-
-    // get the triangles for this surface
-    std::vector<EntityHandle> surf_tris;
-    rval = mbi->get_entities_by_dimension(surf_handle, 2, surf_tris);
-    MB_CHK_SET_ERR_CONT(rval, "Failed to get surface " << surface_id << "'s triangles");
-
-    n_tris = surf_tris.size();
-
-    std::vector<EntityHandle> conn;
-    rval = mbi->get_connectivity(surf_tris.data(), surf_tris.size(), conn);
-    MB_CHK_SET_ERR_CONT(rval, "Failed to get surface connectivity");
-
-    Range verts;
-    verts.insert<std::vector<EntityHandle>>(conn.begin(), conn.end());
-
-    std::vector<double> coords(3*verts.size());
-
-    rval = mbi->get_coords(verts, coords.data());
-    MB_CHK_SET_ERR_CONT(rval, "Failed to get vertex coordinates for surface " << surface_id);
-
-    vertices.resize(3*verts.size());
-
-    for (int i = 0; i < verts.size(); i++) {
-        vertices[i] = R(coords[3*i], coords[3*i+1], coords[3*i+2]);
-    }
-
-    connectivity.resize(surf_tris.size());
-
-    for (int i = 0; i < surf_tris.size(); i++) {
-        connectivity[i] = uint3(verts.index(conn[3*i]), verts.index(conn[3*i+1]), verts.index(conn[3*i+2]));
-    }
-
-    // get the geom sense tag
-    Tag geom_sense;
-    const char GEOM_SENSE_2_TAG_NAME[] = "GEOM_SENSE_2";
-    rval = mbi->tag_get_handle(GEOM_SENSE_2_TAG_NAME, geom_sense);
-    MB_CHK_SET_ERR_CONT(rval, "Failed to get the geometry sense tag");
-
-    std::array<EntityHandle, 2> parent_vols;
-    rval = mbi->tag_get_data(geom_sense, &surf_handle, 1, parent_vols.data());
-    MB_CHK_SET_ERR_CONT(rval, "Failed to get the geometry sense of surface " << surface_id);
-
-    std::array<int, 2> parent_ids = {-1 , -1};
-    int parents_size = parent_vols[1] == 0 ? 1 : 2;
-    rval = mbi->tag_get_data(id_tag, parent_vols.data(), parents_size, parent_ids.data());
-    MB_CHK_SET_ERR_CONT(rval, "Failed to get parent volume IDs");
-
-    // if we're building up this surface and it has a reverse sense relative to the volume provided,
-    // flip the triangle normals by changing the triangle connectivity
-    bool sense_reverse = parent_ids[1] == vol_id;
-    id = sense_reverse ? -surface_id : surface_id;
-    if (sense_reverse) {
-      for (int i = 0; i < surf_tris.size(); i++) {
-        auto& conn = connectivity[i];
-        std::swap(conn[1], conn[2]);
-      }
-    }
-
-    if (id == DEBUG_SURF) {
-    std::cout << "----------------" << std::endl;
-    std::cout << "Surface Creation Stage" << std::endl;
-    std::cout << "Surface " << id << ", natural parent vols: " << parent_ids[0] << ", " << parent_ids[1] << std::endl;
-    }
-
-    vertex_buffer_s = gprtDeviceBufferCreate<R>(context, vertices.size(), vertices.data());
-    conn_buffer = gprtDeviceBufferCreate<uint3>(context, connectivity.size(), connectivity.data());
-
-    triangle_geom_s = gprtGeomCreate<T>(context, g_type);
-
-    T* geom_data = gprtGeomGetParameters(triangle_geom_s);
-    geom_data->vertex = gprtBufferGetHandle(vertex_buffer_s);
-    geom_data->index = gprtBufferGetHandle(conn_buffer);
-    geom_data->id = id;
-
-    if (surface_id == DEBUG_SURF) std::cout << "SPTriangleGeom ID: " << geom_data->id << std::endl;
-
-    if (sense_reverse) {
-      geom_data->vols[0] = parent_ids[1];
-      geom_data->vols[1] = parent_ids[0];
-    } else {
-      geom_data->vols[0] = parent_ids[0];
-      geom_data->vols[1] = parent_ids[1];
-    }
-
-    if (id == DEBUG_SURF)
-      std::cout << "Geom data vols: " << geom_data->vols << std::endl;
-
-  }
-
-  void aabbs(GPRTContext context, GPRTModule module) {
-    aabb_buffer = gprtDeviceBufferCreate<float3>(context, 2*n_tris, nullptr);
-    gprtAABBsSetPositions(triangle_geom_s, aabb_buffer, n_tris, 2*sizeof(float3), 0);
-
-    T* geom_data = gprtGeomGetParameters(triangle_geom_s);
-    geom_data->aabbs = gprtBufferGetHandle(aabb_buffer);
-
-    GPRTComputeOf<T> boundsProg = gprtComputeCreate<T>(context, module, "DPTriangle");
-    auto boundsProgData = gprtComputeGetParameters(boundsProg);
-    boundsProgData->vertex = gprtBufferGetHandle(vertex_buffer_s);
-    boundsProgData->index = gprtBufferGetHandle(conn_buffer);
-    boundsProgData->aabbs = gprtBufferGetHandle(aabb_buffer);
-
-    gprtBuildShaderBindingTable(context, GPRT_SBT_COMPUTE);
-    gprtComputeLaunch1D(context, boundsProg, n_tris);
-    aabbs_present = true;
-  }
-
-  void set_buffers() {
-    gprtTrianglesSetVertices(triangle_geom_s, vertex_buffer_s, vertices.size());
-    gprtTrianglesSetIndices(triangle_geom_s, conn_buffer, connectivity.size());
-  }
-
-  void cleanup() {
-    gprtGeomDestroy(triangle_geom_s);
-    gprtBufferDestroy(vertex_buffer_s);
-    gprtBufferDestroy(conn_buffer);
-  }
 };
 
 using SPTriangleSurface = MBTriangleSurface<SPTriangleData, float3>;
@@ -293,7 +151,7 @@ struct MBVolume {
     }
   }
 
-  void setup(GPRTContext context, GPRTModule module) {
+  void setup(GPRTContext context, GPRTModule module, int2 fbSize) {
     for (int i = 0; i < surfaces_.size(); i++) {
       auto& surf = surfaces_[i];
       gprtTrianglesSetVertices(gprt_geoms_[i], vertex_buffers_[i], surf.vertices.size());
@@ -301,12 +159,22 @@ struct MBVolume {
     }
   }
 
-  // TODO: specialize based on
   void create_accel_structures(GPRTContext context) {
     blas_ = gprtTrianglesAccelCreate(context, gprt_geoms_.size(), gprt_geoms_.data());
     gprtAccelBuild(context, blas_, GPRT_BUILD_MODE_FAST_TRACE_NO_UPDATE);
     tlas_ = gprtInstanceAccelCreate(context, 1, &blas_);
     gprtAccelBuild(context, tlas_, GPRT_BUILD_MODE_FAST_TRACE_NO_UPDATE);
+  }
+
+  void cleanup () {
+    gprtAccelDestroy(tlas_);
+    gprtAccelDestroy(blas_);
+    for (auto& vert_buff : vertex_buffers_) gprtBufferDestroy(vert_buff);
+    for (auto& conn_buff : connectivity_buffers_) gprtBufferDestroy(conn_buff);
+    for (auto& geom : gprt_geoms_) gprtGeomDestroy(geom);
+    // for (auto& surf : surfaces_) {
+    //   if (surf.aabb_buffer) gprtBufferDestroy(surf.aabb_buffer);
+    // }
   }
 
   // Data members
@@ -320,11 +188,17 @@ struct MBVolume {
 };
 
 template<>
-void MBVolume<DPTriangleSurface, DPTriangleData>::setup(GPRTContext context, GPRTModule module) {
+void MBVolume<DPTriangleSurface, DPTriangleData>::setup(GPRTContext context, GPRTModule module, int2 fbSize) {
   // populate AABB buffer
   for (int i = 0; i < surfaces_.size(); i++) {
     auto& surf = surfaces_[i];
     auto& geom = gprt_geoms_[i];
+
+    auto geom_data = gprtGeomGetParameters(geom);
+    geom_data->fbSize = fbSize;
+    // might need this too?
+    // dpGeomData->dpRays = gprtBufferGetHandle(doubleRayBuffer);
+
     surf.aabb_buffer = gprtDeviceBufferCreate<float3>(context, 2*surf.n_tris, nullptr);
     gprtAABBsSetPositions(geom, surf.aabb_buffer, surf.n_tris, 2*sizeof(float3), 0);
     GPRTComputeOf<DPTriangleData> boundsProg = gprtComputeCreate<DPTriangleData>(context, module, "DPTriangle");
@@ -361,9 +235,9 @@ struct MBVolumes {
     }
   }
 
-  void setup(GPRTContext context, GPRTModule module) {
+  void setup(GPRTContext context, GPRTModule module, int2 fbSize) {
     for (auto& volume : volumes()) {
-      volume.setup(context, module);
+      volume.setup(context, module, fbSize);
     }
   }
 
@@ -395,6 +269,14 @@ struct MBVolumes {
         geom_data->ff_vol = vol_id_to_idx_map[geom_data->vols[0]];
         geom_data->bf_vol = vol_id_to_idx_map[geom_data->vols[1]];
       }
+    }
+  }
+
+  void cleanup() {
+    gprtAccelDestroy(world_tlas_);
+    gprtBufferDestroy(tlas_buffer_);
+    for (auto& vol : volumes()) {
+      vol.cleanup();
     }
   }
 

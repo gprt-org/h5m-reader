@@ -190,23 +190,22 @@ int main(int argc, char** argv) {
   auto bbox = bounding_box(mbi.get());
 
   // create volumes
-  MBVolumes<SPTriangleSurface, SPTriangleData> mbvols(volumes);
-  mbvols.populate_surfaces(dag.get());
-  mbvols.create_geoms(context, SPTriangleType);
-  mbvols.setup(context, module);
-  mbvols.create_accel_structures(context);
+  MBVolumes<SPTriangleSurface, SPTriangleData> spvols(volumes);
+  MBVolumes<DPTriangleSurface, DPTriangleData> dpvols(volumes);
 
+  if (useFloats) {
+    spvols.populate_surfaces(dag.get());
+    spvols.create_geoms(context, SPTriangleType);
+    spvols.setup(context, module, fbSize);
+    spvols.create_accel_structures(context);
+  } else {
+    dpvols.populate_surfaces(dag.get());
+    dpvols.create_geoms(context, DPTriangleType);
+    dpvols.setup(context, module, fbSize);
+    dpvols.create_accel_structures(context);
+  }
 
   // create geometries
-  std::map<int, std::vector<SPTriangleSurface>> SPTriSurfs;
-  std::map<int, std::vector<DPTriangleSurface>> DPTriSurfs;
-
-  std::map<int, std::vector<GPRTGeomOf<SPTriangleData>>> SPgeoms;
-  std::map<int, std::vector<GPRTGeomOf<DPTriangleData>>> DPgeoms;
-
-  std::vector<GPRTAccel> blass;
-  std::map<int, int> blas_map; //map volume ID to index in BLAS buffer
-
   uint32_t numVols = dag->num_entities(3);
 
   int max_vol_id = 0;
@@ -214,82 +213,14 @@ int main(int argc, char** argv) {
     max_vol_id = std::max(max_vol_id, dag->id_by_index(3, i));
   }
 
-  if (useFloats) {
-    // create the triangle surfaces for each volume, stored in a map of vol_id to vector of surface objects
-    SPTriSurfs = setup_surfaces<SPTriangleSurface, SPTriangleData>(context, module, dag, SPTriangleType, volumes);
-
-    // map volumes to geometries
-    for (auto& vol_surfs : SPTriSurfs) {
-      SPgeoms[vol_surfs.first] = {};
-      for (auto& ts : vol_surfs.second) {
-        ts.set_buffers();
-        SPgeoms[vol_surfs.first].push_back(ts.triangle_geom_s);
-      }
-    }
-
-    // build a BLAS for each each volume containing all of its surface geometries
-    for (auto& vol_geoms : SPgeoms) {
-      if (vol_geoms.second.size() == 0) continue;
-      blas_map[vol_geoms.first] = blass.size();
-      blass.push_back(gprtTrianglesAccelCreate(context, vol_geoms.second.size(), vol_geoms.second.data()));
-      gprtAccelBuild(context, blass.back(), GPRT_BUILD_MODE_FAST_TRACE_NO_UPDATE);
-    }
-  } else {
-    DPTriSurfs = setup_surfaces<DPTriangleSurface, DPTriangleData>(context, module, dag, DPTriangleType, volumes);
-
-    for (auto& vol_surfs : DPTriSurfs) {
-      DPgeoms[vol_surfs.first] = {};
-      for (auto& ts : vol_surfs.second) {
-        ts.aabbs(context, module);
-        DPgeoms[vol_surfs.first].push_back(ts.triangle_geom_s);
-      }
-    }
-
-    for (auto& vol_geoms : DPgeoms) {
-      if (vol_geoms.second.size() == 0 ) continue;
-      blas_map[vol_geoms.first] = blass.size();
-      blass.push_back(gprtAABBAccelCreate(context, vol_geoms.second.size(), vol_geoms.second.data()));
-      gprtAccelBuild(context, blass.back(), GPRT_BUILD_MODE_FAST_TRACE_NO_UPDATE);
-    }
-  }
-
   // empty the mesh library's copy (good riddance)
   rval = mbi->delete_mesh();
   MOAB_CHECK_ERROR(rval);
   mbi.reset();
 
-  if (SPTriSurfs.size() == 0 && DPTriSurfs.size() == 0) {
+  if (volumes.size() == 0) {
     std::cerr << "No surfaces visible" << std::endl;
     std::exit(1);
-  }
-
-  // now map surfaces to volumes
-  if (useFloats) {
-    for (auto& v : SPTriSurfs) {
-      for (auto& s : v.second) {
-        SPTriangleData* geom_data = gprtGeomGetParameters(s.triangle_geom_s);
-        geom_data->ff_vol = blas_map[geom_data->vols[0]];
-        geom_data->bf_vol = blas_map[geom_data->vols[1]];
-        if (s.id == DEBUG_SURF) {
-          std::cout << "-------------" << std::endl;
-          std::cout << "BLAS indexing stage" << std::endl;
-          std::cout << "Surface ID: " << s.id << ", Geom Data ID: " << geom_data->id << std::endl;
-          std::cout << "Geom Data Vols: " << geom_data->vols << std::endl;
-          std::cout << "FF BLAS idx: " << geom_data->ff_vol << ", BF BLAS idx: " << geom_data->bf_vol << std::endl;
-        }
-        // ensure the index being set doesn't exceed a valid index value
-        if (geom_data->ff_vol > blass.size() - 1) { std::cout << "FF Error" << std::endl; std::exit(1); }
-        if (geom_data->bf_vol > blass.size() - 1) { std::cout << "BF Error" << std::endl; std::exit(1); }
-      }
-    }
-  } else {
-    for (auto& v : DPTriSurfs) {
-      for (auto& s : v.second) {
-        DPTriangleData* geom_data = gprtGeomGetParameters(s.triangle_geom_s);
-        geom_data->ff_vol = blas_map[geom_data->vols[0]];
-        geom_data->bf_vol = blas_map[geom_data->vols[1]];
-      }
-    }
   }
 
   double3 aabbCentroid = bbox.first + (bbox.second - bbox.first) * 0.5;
@@ -298,25 +229,6 @@ int main(int argc, char** argv) {
   float3 lookAt = float3(float(aabbCentroid.x),float(aabbCentroid.y),float(aabbCentroid.z));
   float3 lookUp = {0.f,0.f,-1.f};
   float cosFovy = 0.66f;
-
-  // create one world tree from all of the volume BLAS's
-  GPRTAccel world = gprtInstanceAccelCreate(context, blass.size(), blass.data());
-  gprtAccelBuild(context, world, GPRT_BUILD_MODE_FAST_TRACE_NO_UPDATE);
-
-  // build a TLAS for each volume
-  std::vector<GPRTAccel> tlass;
-  for (int i = 0; i < blass.size(); i++) {
-    tlass.push_back(gprtInstanceAccelCreate(context, 1, blass.data() + i));
-    gprtAccelBuild(context, tlass.back(), GPRT_BUILD_MODE_FAST_TRACE_NO_UPDATE);
-  }
-
-  // get acceleration data structures to be mapped to device
-  std::vector<gprt::Accel> accel_ptrs;
-  for (int i = 0; i <  tlass.size(); i++) {
-    accel_ptrs.push_back(gprtAccelGetHandle(tlass[i]));
-  }
-
-  auto partTree_buffer = gprtDeviceBufferCreate<gprt::Accel>(context, accel_ptrs.size(), accel_ptrs.data());
 
   // Allocate a grid for DDA to hold physics kernel results
   auto ddaGrid = gprtDeviceBufferCreate<float>(context, gridDims.x * gridDims.y * gridDims.z);
@@ -364,23 +276,15 @@ int main(int argc, char** argv) {
     rayGenData = gprtRayGenGetParameters(DPRayGen);
     doubleRayBuffer = gprtDeviceBufferCreate<double>(context,fbSize.x*fbSize.y*8);
     rayGenData->dpRays = gprtBufferGetHandle(doubleRayBuffer);
-
-
-    for (auto& vol_surfs : DPTriSurfs) {
-      for (auto& ts : vol_surfs.second) {
-        auto dpGeomData = gprtGeomGetParameters(ts.triangle_geom_s);
-        dpGeomData->fbSize = fbSize;
-        dpGeomData->dpRays = gprtBufferGetHandle(doubleRayBuffer);
-      }
-    }
   }
+
   rayGenData->fbPtr = gprtBufferGetHandle(frameBuffer);
   rayGenData->accumPtr = gprtBufferGetHandle(accumBuffer);
   rayGenData->guiTexture = gprtTextureGetHandle(guiColorAttachment);
   rayGenData->fbSize = fbSize;
   rayGenData->moveOrigin = false;
-  rayGenData->world = gprtAccelGetHandle(mbvols.world_tlas_);
-  rayGenData->partTrees = gprtBufferGetHandle(mbvols.tlas_buffer_);
+  rayGenData->world = gprtAccelGetHandle(spvols.world_tlas_);
+  rayGenData->partTrees = gprtBufferGetHandle(spvols.tlas_buffer_);
   rayGenData->aabbMin = float3(bbox.first.x, bbox.first.y, bbox.first.z);
   rayGenData->aabbMax = float3(bbox.second.x, bbox.second.y, bbox.second.z);
   rayGenData->unit = 1000.f;
@@ -648,26 +552,16 @@ int main(int argc, char** argv) {
   // gprtBufferDestroy(indexBuffer);
   // if (aabbPositionsBuffer) gprtBufferDestroy(aabbPositionsBuffer);
   gprtBufferDestroy(frameBuffer);
-  gprtBufferDestroy(partTree_buffer);
   gprtTextureDestroy(guiColorAttachment);
   gprtTextureDestroy(guiDepthAttachment);
-  // if (doubleRayBuffer) gprtBufferDestroy(doubleRayBuffer);
+  if (doubleRayBuffer) gprtBufferDestroy(doubleRayBuffer);
   if (SPRayGen) gprtRayGenDestroy(SPRayGen);
   if (SPVolVis) gprtRayGenDestroy(SPVolVis);
   if (DPRayGen) gprtRayGenDestroy(DPRayGen);
   gprtRayGenDestroy(Voxelize);
-  // if (DPRayGen) gprtRayGenDestroy(DPRayGen);
   gprtMissDestroy(miss);
-  for (auto& blas : blass) gprtAccelDestroy(blas);
-  gprtAccelDestroy(world);
-  // if (dpGeom) gprtGeomDestroy(dpGeom);
-  // for (auto& spGeom : spGeoms) gprtGeomDestroy(spGeom);
-  for (auto& vol_surfs : SPTriSurfs) {
-    for (auto& g : vol_surfs.second) { g.cleanup(); }
-  }
-  for (auto& vol_surfs : DPTriSurfs) {
-    for (auto& g : vol_surfs.second) { g.cleanup();}
-  }
+  if (useFloats) spvols.cleanup();
+  else dpvols.cleanup();
   gprtGeomTypeDestroy(DPTriangleType);
   gprtGeomTypeDestroy(SPTriangleType);
   gprtModuleDestroy(module);
