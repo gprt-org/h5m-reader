@@ -187,7 +187,7 @@ GPRT_RAYGEN_PROGRAM(SPRayGen, (RayGenData, record))
 
     // float3 color = normalize(float3(Random(payload.vol_ids.x), Random(payload.vol_ids.x + 1), Random(payload.vol_ids.x + 1)));
 
-    // hit background 
+    // hit background
     if (payload.vol_ids.y == -2) {
       color = over(color, float4(0.0f, 0.0f, 0.0f, 1.0f));
       break;
@@ -690,15 +690,15 @@ GPRT_CLOSEST_HIT_PROGRAM(SPTriangle, (SPTriangleData, record), (Payload, payload
     payload.vol_ids.x = record.vols[1]; // moving out of this volume
     payload.vol_ids.y = record.vols[0]; // moving into this volume
     payload.next_vol = record.ff_vol; // moving into the frontface volume
-    // uint2 pixelID = DispatchRaysIndex().xy;
-    // uint2 centerID = DispatchRaysDimensions().xy / 2;
-    // if (all(pixelID == centerID)) {
-    //   // printf("Index of next volume BLAS %i", payload.next_vol);
-    //   // printf("Going from volume %i into volume %i, ", payload.vol_ids.x, payload.vol_ids.y);
-    //   printf("\nSurface ID: %i \n"
-    //   "Geom Data Vols: {%i, %i}\n"
-    //   "Index of next volume BLAS %i\n", record.id, record.vols[1], record.vols[0], record.ff_vol);
-    // }
+    uint2 pixelID = DispatchRaysIndex().xy;
+    uint2 centerID = DispatchRaysDimensions().xy / 2;
+    if (all(pixelID == centerID)) {
+      // printf("Index of next volume BLAS %i", payload.next_vol);
+      // printf("Going from volume %i into volume %i, ", payload.vol_ids.x, payload.vol_ids.y);
+      printf("\nSurface ID: %i \n"
+      "Geom Data Vols: {%i, %i}\n"
+      "Index of next volume BLAS %i\n", record.id, record.vols[1], record.vols[0], record.ff_vol);
+    }
   }
   payload.hitDistance = RayTCurrent();
 }

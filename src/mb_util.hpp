@@ -50,7 +50,6 @@ MBTriangleSurface(DagMC* dagmc, EntityHandle surf_handle, EntityHandle vol_handl
   int surface_id = dagmc->get_entity_id(surf_handle);
   int volume_id = dagmc->get_entity_id(vol_handle);
 
-
   // get the triangles for this surface
   std::vector<EntityHandle> surf_tris;
   rval = mbi->get_entities_by_dimension(surf_handle, 2, surf_tris);
@@ -111,11 +110,11 @@ MBTriangleSurface(DagMC* dagmc, EntityHandle surf_handle, EntityHandle vol_handl
 
   // set forward/reverse volume information
   if (sense_reverse) {
-    parent_ids[0] = parent_ids[1];
-    parent_ids[1] = parent_ids[0];
+    this->parent_ids[0] = parent_ids[1];
+    this->parent_ids[1] = parent_ids[0];
   } else {
-    parent_ids[0] = parent_ids[0];
-    parent_ids[1] = parent_ids[1];
+    this->parent_ids[0] = parent_ids[0];
+    this->parent_ids[1] = parent_ids[1];
   }
 }
 
@@ -278,10 +277,9 @@ struct MBVolume {
     ErrorCode rval = dagmc->moab_instance()->get_child_meshsets(vol, moab_surf_handles);
 
     for (auto surface_handle : moab_surf_handles)
-      MBTriangleSurface<T, float3> gprt_surface(dagmc, surface_handle, vol);
+      surfaces_.emplace_back(std::move(T(dagmc, surface_handle, vol)));
   }
 
-  // TODO: specialize based on template type eventually
   void create_geoms(GPRTContext context, GPRTGeomTypeOf<G> g_type) {
     for (auto& surf : surfaces_) {
       vertex_buffers_.push_back(gprtDeviceBufferCreate<typename T::vertex_type>(context, surf.vertices.size(), surf.vertices.data()));
@@ -291,7 +289,24 @@ struct MBVolume {
       geom_data->vertex = gprtBufferGetHandle(vertex_buffers_.back());
       geom_data->index = gprtBufferGetHandle(connectivity_buffers_.back());
       geom_data->id = surf.id;
+      geom_data->vols = surf.parent_ids;
     }
+  }
+
+  void setup(GPRTContext context, GPRTModule module) {
+    for (int i = 0; i < surfaces_.size(); i++) {
+      auto& surf = surfaces_[i];
+      gprtTrianglesSetVertices(gprt_geoms_[i], vertex_buffers_[i], surf.vertices.size());
+      gprtTrianglesSetIndices(gprt_geoms_[i], connectivity_buffers_[i], surf.connectivity.size());
+    }
+  }
+
+  // TODO: specialize based on
+  void create_accel_structures(GPRTContext context) {
+    blas_ = gprtTrianglesAccelCreate(context, gprt_geoms_.size(), gprt_geoms_.data());
+    gprtAccelBuild(context, blas_, GPRT_BUILD_MODE_FAST_TRACE_NO_UPDATE);
+    tlas_ = gprtInstanceAccelCreate(context, 1, &blas_);
+    gprtAccelBuild(context, tlas_, GPRT_BUILD_MODE_FAST_TRACE_NO_UPDATE);
   }
 
   // Data members
@@ -303,6 +318,25 @@ struct MBVolume {
   GPRTAccel blas_;
   GPRTAccel tlas_;
 };
+
+template<>
+void MBVolume<DPTriangleSurface, DPTriangleData>::setup(GPRTContext context, GPRTModule module) {
+  // populate AABB buffer
+  for (int i = 0; i < surfaces_.size(); i++) {
+    auto& surf = surfaces_[i];
+    auto& geom = gprt_geoms_[i];
+    surf.aabb_buffer = gprtDeviceBufferCreate<float3>(context, 2*surf.n_tris, nullptr);
+    gprtAABBsSetPositions(geom, surf.aabb_buffer, surf.n_tris, 2*sizeof(float3), 0);
+    GPRTComputeOf<DPTriangleData> boundsProg = gprtComputeCreate<DPTriangleData>(context, module, "DPTriangle");
+    auto boundsProgData = gprtComputeGetParameters(boundsProg);
+    boundsProgData->vertex = gprtBufferGetHandle(vertex_buffers_[i]);
+    boundsProgData->index = gprtBufferGetHandle(connectivity_buffers_[i]);
+    boundsProgData->aabbs = gprtBufferGetHandle(surf.aabb_buffer);
+    gprtBuildShaderBindingTable(context, GPRT_SBT_COMPUTE);
+    gprtComputeLaunch1D(context, boundsProg, surf.n_tris);
+    surf.aabbs_present = true;
+  }
+}
 
 template<class T, class G>
 struct MBVolumes {
@@ -320,10 +354,47 @@ struct MBVolumes {
     }
   }
 
-  // TODO: specialize this step for single/double template parameters
   void create_geoms(GPRTContext context, GPRTGeomTypeOf<G> g_type) {
     for (auto& volume : volumes()) {
       volume.create_geoms(context, g_type);
+
+    }
+  }
+
+  void setup(GPRTContext context, GPRTModule module) {
+    for (auto& volume : volumes()) {
+      volume.setup(context, module);
+    }
+  }
+
+  void create_accel_structures(GPRTContext context) {
+    // gather up all BLAS and join into a single TLAS
+    std::vector<GPRTAccel> blass;
+    for (auto& vol : volumes()) {
+      vol.create_accel_structures(context);
+      blass.push_back(vol.blas_);
+    }
+    world_tlas_ = gprtInstanceAccelCreate(context, blass.size(), blass.data());
+    gprtAccelBuild(context, world_tlas_, GPRT_BUILD_MODE_FAST_TRACE_NO_UPDATE);
+
+    std::vector<gprt::Accel> accel_ptrs;
+    for (auto& vol : volumes()) accel_ptrs.push_back(gprtAccelGetHandle(vol.tlas_));
+    // map acceleration pointers to a device buffer
+    tlas_buffer_ = gprtDeviceBufferCreate<gprt::Accel>(context, accel_ptrs.size(), accel_ptrs.data());
+
+    // create a map of volume ID to index
+    std::map<int, int> vol_id_to_idx_map;
+    for (int i = 0; i < volumes().size(); i++) {
+      vol_id_to_idx_map[volumes()[i].id_] = i;
+    }
+
+    // set surface parent indices into the tlas buffer for each surface
+    for (auto& vol : volumes()) {
+      for (auto& geom : vol.gprt_geoms_) {
+        auto geom_data = gprtGeomGetParameters(geom);
+        geom_data->ff_vol = vol_id_to_idx_map[geom_data->vols[0]];
+        geom_data->bf_vol = vol_id_to_idx_map[geom_data->vols[1]];
+      }
     }
   }
 
@@ -333,6 +404,8 @@ struct MBVolumes {
 
   // Data members
   std::vector<MBVolume<T, G>> volumes_;
+  GPRTAccel world_tlas_;
+  GPRTBufferOf<gprt::Accel> tlas_buffer_;
 };
 
 template<class T>
@@ -351,13 +424,8 @@ struct MBTriangleSurfaces {
 
 // TLAS creation and index mapping into the TLAS should be able to occur on each of these containers
 template<class T, class G>
-std::map<int, std::vector<T>> setup_surfaces(GPRTContext context, std::shared_ptr<moab::DagMC> dag, GPRTGeomTypeOf<G> g_type, std::vector<int> visible_vol_ids = {}) {
+std::map<int, std::vector<T>> setup_surfaces(GPRTContext context, GPRTModule module, std::shared_ptr<moab::DagMC> dag, GPRTGeomTypeOf<G> g_type, std::vector<int> visible_vol_ids = {}) {
     ErrorCode rval;
-
-    // get this surface's handle
-    Tag dim_tag;
-    rval = dag->moab_instance()->tag_get_handle(GEOM_DIMENSION_TAG_NAME, dim_tag);
-    MB_CHK_SET_ERR_CONT(rval, "Failed to get the geom dim tag");
 
     int n_surfs = dag->num_entities(2);
 
@@ -374,13 +442,6 @@ std::map<int, std::vector<T>> setup_surfaces(GPRTContext context, std::shared_pt
       dag->get_graveyard_group(gyg);
       dag->moab_instance()->get_entities_by_type(gyg, MBENTITYSET, gys);
     }
-
-    // create a volume object for every visible volume
-    MBVolumes<T, G> volumes(visible_vol_ids);
-    // populate the surfaces with their MOAB data
-    volumes.populate_surfaces(dag.get());
-    // setup GPRT geometries and buffers
-    volumes.create_geoms(context, g_type);
 
     std::map<int, std::vector<T>> out;
     for (auto vol_id : visible_vol_ids) {

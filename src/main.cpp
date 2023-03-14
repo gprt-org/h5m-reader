@@ -95,6 +95,11 @@ int main(int argc, char** argv) {
   rval = dag->setup_indices();
   MOAB_CHECK_ERROR(rval);
 
+  if (dag->num_entities(2) == 0) {
+    std::cerr << "No surfaces were found in the model" << std::endl;
+    std::exit(1);
+  }
+
   rval = dag->setup_impl_compl();
   MOAB_CHECK_ERROR(rval);
 
@@ -135,7 +140,11 @@ int main(int argc, char** argv) {
   int implicit_complement_id = dag->get_entity_id(implicit_complement);
 
   std::vector<int> volumes;
-  if (args.is_used("--volumes")) volumes = args.get<std::vector<int>>("volumes");
+  if (args.is_used("--volumes")) {
+    volumes = args.get<std::vector<int>>("volumes");
+  } else {
+    for (int i = 0; i < dag->num_entities(3); i++) volumes.push_back(dag->id_by_index(3, i+1));
+  }
 
   // start up GPRT
   gprtRequestWindow(fbSize.x, fbSize.y, "H5M");
@@ -180,6 +189,14 @@ int main(int argc, char** argv) {
   // compute centroid to look at
   auto bbox = bounding_box(mbi.get());
 
+  // create volumes
+  MBVolumes<SPTriangleSurface, SPTriangleData> mbvols(volumes);
+  mbvols.populate_surfaces(dag.get());
+  mbvols.create_geoms(context, SPTriangleType);
+  mbvols.setup(context, module);
+  mbvols.create_accel_structures(context);
+
+
   // create geometries
   std::map<int, std::vector<SPTriangleSurface>> SPTriSurfs;
   std::map<int, std::vector<DPTriangleSurface>> DPTriSurfs;
@@ -199,7 +216,7 @@ int main(int argc, char** argv) {
 
   if (useFloats) {
     // create the triangle surfaces for each volume, stored in a map of vol_id to vector of surface objects
-    SPTriSurfs = setup_surfaces<SPTriangleSurface, SPTriangleData>(context, dag, SPTriangleType, volumes);
+    SPTriSurfs = setup_surfaces<SPTriangleSurface, SPTriangleData>(context, module, dag, SPTriangleType, volumes);
 
     // map volumes to geometries
     for (auto& vol_surfs : SPTriSurfs) {
@@ -218,7 +235,7 @@ int main(int argc, char** argv) {
       gprtAccelBuild(context, blass.back(), GPRT_BUILD_MODE_FAST_TRACE_NO_UPDATE);
     }
   } else {
-    DPTriSurfs = setup_surfaces<DPTriangleSurface, DPTriangleData>(context, dag, DPTriangleType, volumes);
+    DPTriSurfs = setup_surfaces<DPTriangleSurface, DPTriangleData>(context, module, dag, DPTriangleType, volumes);
 
     for (auto& vol_surfs : DPTriSurfs) {
       DPgeoms[vol_surfs.first] = {};
@@ -338,6 +355,7 @@ int main(int argc, char** argv) {
   RayGenData* rayGenData = nullptr;
   RayGenData* volVisData = nullptr;
   RayGenData* voxelizeData = gprtRayGenGetParameters(Voxelize);
+
   if (useFloats) {
     rayGenData = gprtRayGenGetParameters(SPRayGen);
     volVisData = gprtRayGenGetParameters(SPVolVis);
@@ -361,8 +379,8 @@ int main(int argc, char** argv) {
   rayGenData->guiTexture = gprtTextureGetHandle(guiColorAttachment);
   rayGenData->fbSize = fbSize;
   rayGenData->moveOrigin = false;
-  rayGenData->world = gprtAccelGetHandle(world);
-  rayGenData->partTrees = gprtBufferGetHandle(partTree_buffer);
+  rayGenData->world = gprtAccelGetHandle(mbvols.world_tlas_);
+  rayGenData->partTrees = gprtBufferGetHandle(mbvols.tlas_buffer_);
   rayGenData->aabbMin = float3(bbox.first.x, bbox.first.y, bbox.first.z);
   rayGenData->aabbMax = float3(bbox.second.x, bbox.second.y, bbox.second.z);
   rayGenData->unit = 1000.f;
