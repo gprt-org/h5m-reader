@@ -190,8 +190,8 @@ int main(int argc, char** argv) {
   auto bbox = bounding_box(mbi.get());
 
   // create volumes
-  MBVolumes<SPTriangleSurface, SPTriangleData> spvols(volumes);
-  MBVolumes<DPTriangleSurface, DPTriangleData> dpvols(volumes);
+  MBVolumes<SPTriangleSurface> spvols(volumes);
+  MBVolumes<DPTriangleSurface> dpvols(volumes);
   GPRTBufferOf<double> doubleRayBuffer = nullptr;
 
   if (useFloats) {

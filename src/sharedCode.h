@@ -25,6 +25,7 @@
 /* variables for the triangle mesh geometry */
 struct DPTriangleData
 {
+  typedef double3 vertex_type;
   /*! array/buffer of vertex indices */
   alignas(16) gprt::Buffer index; // vec3f*
   /*! array/buffer of vertex positions */
@@ -46,6 +47,7 @@ struct DPTriangleData
 
 struct SPTriangleData
 {
+  typedef float3 vertex_type;
   /*! array/buffer of vertex indices */
   alignas(16) gprt::Buffer index; // vec3f*
   /*! array/buffer of vertex positions */

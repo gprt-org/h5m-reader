@@ -18,16 +18,16 @@ float3 rnd_color() {
   return normalize(float3( std::rand(), std::rand(), std::rand()));
 }
 
-template<class T, typename R>
+template<class T>
 struct MBTriangleSurface {
 
-  typedef R vertex_type;
+  typedef T geom_data_type;
 
   int id;
   int n_tris;
   int frontface_vol;
   int backface_vol;
-  std::vector<R> vertices;
+  std::vector<typename T::vertex_type> vertices;
   std::vector<uint3> connectivity;
   GPRTBufferOf<float3> aabb_buffer;
   GPRTGeomOf<T> triangle_geom_s;
@@ -70,7 +70,7 @@ MBTriangleSurface(DagMC* dagmc, EntityHandle surf_handle, EntityHandle vol_handl
   vertices.resize(3*verts.size());
 
   for (int i = 0; i < verts.size(); i++) {
-      vertices[i] = R(coords[3*i], coords[3*i+1], coords[3*i+2]);
+      vertices[i] = typename T::vertex_type(coords[3*i], coords[3*i+1], coords[3*i+2]);
   }
 
   connectivity.resize(surf_tris.size());
@@ -119,10 +119,10 @@ MBTriangleSurface(DagMC* dagmc, EntityHandle surf_handle, EntityHandle vol_handl
 
 };
 
-using SPTriangleSurface = MBTriangleSurface<SPTriangleData, float3>;
-using DPTriangleSurface = MBTriangleSurface<DPTriangleData, double3>;
+using SPTriangleSurface = MBTriangleSurface<SPTriangleData>;
+using DPTriangleSurface = MBTriangleSurface<DPTriangleData>;
 
-template<class T, class G>
+template<class T>
 struct MBVolume {
   // Constructor
   MBVolume(int id) : id_(id) {};
@@ -138,12 +138,12 @@ struct MBVolume {
       surfaces_.emplace_back(std::move(T(dagmc, surface_handle, vol)));
   }
 
-  void create_geoms(GPRTContext context, GPRTGeomTypeOf<G> g_type) {
+  void create_geoms(GPRTContext context, GPRTGeomTypeOf<typename T::geom_data_type> g_type) {
     for (auto& surf : surfaces_) {
-      vertex_buffers_.push_back(gprtDeviceBufferCreate<typename T::vertex_type>(context, surf.vertices.size(), surf.vertices.data()));
+      vertex_buffers_.push_back(gprtDeviceBufferCreate<typename T::geom_data_type::vertex_type>(context, surf.vertices.size(), surf.vertices.data()));
       connectivity_buffers_.push_back(gprtDeviceBufferCreate<uint3>(context, surf.connectivity.size(), surf.connectivity.data()));
-      gprt_geoms_.push_back(gprtGeomCreate<G>(context, g_type));
-      G* geom_data = gprtGeomGetParameters(gprt_geoms_.back());
+      gprt_geoms_.push_back(gprtGeomCreate<typename T::geom_data_type>(context, g_type));
+      typename T::geom_data_type* geom_data = gprtGeomGetParameters(gprt_geoms_.back());
       geom_data->vertex = gprtBufferGetHandle(vertex_buffers_.back());
       geom_data->index = gprtBufferGetHandle(connectivity_buffers_.back());
       geom_data->id = surf.id;
@@ -159,6 +159,7 @@ struct MBVolume {
     }
   }
 
+  // does nothing by default
   void dbl_setup(int2 fbSize, GPRTBufferOf<double> dpray_buff) {}
 
   void create_accel_structures(GPRTContext context) {
@@ -182,15 +183,15 @@ struct MBVolume {
   // Data members
   int id_;
   std::vector<T> surfaces_;
-  std::vector<GPRTBufferOf<typename T::vertex_type>> vertex_buffers_;
+  std::vector<GPRTBufferOf<typename T::geom_data_type::vertex_type>> vertex_buffers_;
   std::vector<GPRTBufferOf<uint3>> connectivity_buffers_;
-  std::vector<GPRTGeomOf<G>> gprt_geoms_;
+  std::vector<GPRTGeomOf<typename T::geom_data_type>> gprt_geoms_;
   GPRTAccel blas_;
   GPRTAccel tlas_;
 };
 
 template<>
-void MBVolume<DPTriangleSurface, DPTriangleData>::setup(GPRTContext context, GPRTModule module)
+void MBVolume<DPTriangleSurface>::setup(GPRTContext context, GPRTModule module)
 {
   // populate AABB buffer
   for (int i = 0; i < surfaces_.size(); i++) {
@@ -211,7 +212,7 @@ void MBVolume<DPTriangleSurface, DPTriangleData>::setup(GPRTContext context, GPR
 }
 
 template<>
-void MBVolume<DPTriangleSurface, DPTriangleData>::dbl_setup(int2 fbSize, GPRTBufferOf<double> dpray_buff)
+void MBVolume<DPTriangleSurface>::dbl_setup(int2 fbSize, GPRTBufferOf<double> dpray_buff)
 {
   for (auto& geom : gprt_geoms_) {
     auto geom_data = gprtGeomGetParameters(geom);
@@ -221,7 +222,7 @@ void MBVolume<DPTriangleSurface, DPTriangleData>::dbl_setup(int2 fbSize, GPRTBuf
 }
 
 template<>
-void MBVolume<DPTriangleSurface, DPTriangleData>::create_accel_structures(GPRTContext context)
+void MBVolume<DPTriangleSurface>::create_accel_structures(GPRTContext context)
 {
   blas_ = gprtAABBAccelCreate(context, gprt_geoms_.size(), gprt_geoms_.data());
   gprtAccelBuild(context, blas_, GPRT_BUILD_MODE_FAST_TRACE_NO_UPDATE);
@@ -229,12 +230,12 @@ void MBVolume<DPTriangleSurface, DPTriangleData>::create_accel_structures(GPRTCo
   gprtAccelBuild(context, tlas_, GPRT_BUILD_MODE_FAST_TRACE_NO_UPDATE);
 }
 
-template<class T, class G>
+template<class T>
 struct MBVolumes {
   // Constructors
   MBVolumes(std::vector<int> ids) {
     for (auto id : ids) {
-      volumes().push_back(MBVolume<T, G>(id));
+      volumes().push_back(MBVolume<T>(id));
     }
   }
 
@@ -245,7 +246,7 @@ struct MBVolumes {
     }
   }
 
-  void create_geoms(GPRTContext context, GPRTGeomTypeOf<G> g_type) {
+  void create_geoms(GPRTContext context, GPRTGeomTypeOf<typename T::geom_data_type> g_type) {
     for (auto& volume : volumes()) {
       volume.create_geoms(context, g_type);
 
@@ -308,7 +309,7 @@ struct MBVolumes {
   auto& volumes() { return volumes_; }
 
   // Data members
-  std::vector<MBVolume<T, G>> volumes_;
+  std::vector<MBVolume<T>> volumes_;
   GPRTAccel world_tlas_;
   GPRTBufferOf<gprt::Accel> tlas_buffer_;
 };
