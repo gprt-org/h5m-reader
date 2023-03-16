@@ -74,6 +74,8 @@ GPRT_RAYGEN_PROGRAM(DPRayGen, (RayGenData, record))
   payload.vol_ids = int2(-1, -1);
 
   uint2 pixelID = DispatchRaysIndex().xy;
+  uint2 centerID = DispatchRaysDimensions().xy / 2;
+
   float2 screen = (float2(pixelID) +
                   float2(.5f, .5f)) / float2(record.fbSize);
   const int fbOfs = pixelID.x + record.fbSize.x * pixelID.y;
@@ -93,26 +95,44 @@ GPRT_RAYGEN_PROGRAM(DPRayGen, (RayGenData, record))
   gprt::store(record.dpRays, fbOfs * 2 + 0, double4(rayDesc.Origin.x, rayDesc.Origin.y, rayDesc.Origin.z, rayDesc.TMin));
   gprt::store(record.dpRays, fbOfs * 2 + 1, double4(rayDesc.Direction.x, rayDesc.Direction.y, rayDesc.Direction.z, rayDesc.TMax));
 
-  TraceRay(
-    world, // the tree
-    RAY_FLAG_NONE, // ray flags
-    0xff, // instance inclusion mask
-    0, // ray type
-    1, // number of ray types
-    0, // miss type
-    rayDesc, // the ray to trace
-    payload // the payload IO
-  );
+  uint32_t maxVolID = record.maxVolID;
 
-  // generate color using volume ID
-  float3 color = normalize(float3(Random(payload.vol_ids.x), Random(payload.vol_ids.x + 1), Random(payload.vol_ids.x + 1)));
+  Texture1D surfaceColormap = gprt::getTexture1DHandle(record.surfaceColormap);
+  SamplerState sampler = gprt::getSamplerHandle(record.colormapSampler);
 
-  if (payload.vol_ids.x == -2) {
-    color = float3(1.0f, 1.0f, 1.0f);
-  }
+  float previousT;
+  float nudge = 0.0;
+  float4 color = float4(0.0f, 0.0f, 0.0f, 1.0f);
 
-  if (payload.vol_ids.x == -3) {
-    color = float3(0.0f, 0.0f, 0.0f);
+  for (int i = 0; i < MAX_DEPTH; i++) {
+    TraceRay(
+      world, // the tree
+      RAY_FLAG_NONE, // ray flags
+      0xff, // instance inclusion mask
+      0, // ray type
+      1, // number of ray types
+      0, // miss type
+      rayDesc, // the ray to trace
+      payload // the payload IO
+    );
+
+    // generate color using volume ID
+    if (all(pixelID == centerID)) printf("Hit distance: %f", payload.hitDistance);
+    float dataValue = float(payload.vol_ids.x) / float(maxVolID);
+    float4 xf = surfaceColormap.SampleGrad(sampler, dataValue, 0.f, 0.f);
+
+    if (xf.w != 0.f) {
+      color = over(color, xf);
+      // if (color.a > .99) break;
+    }
+
+    if (payload.vol_ids.x == -2) {
+      color = float4(1.0f, 1.0f, 1.0f, 1.0f);
+    }
+
+    if (payload.vol_ids.x == -3) {
+      color = float4(0.0f, 0.0f, 0.0f, 1.0f);
+    }
   }
 
   gprt::store(record.fbPtr, fbOfs, gprt::make_bgra(color));
@@ -477,14 +497,18 @@ GPRT_COMPUTE_PROGRAM(DPTriangle, (DPTriangleData, record), (1,1,1))
 GPRT_CLOSEST_HIT_PROGRAM(DPTriangle, (DPTriangleData, record), (Payload, payload), (DPAttribute, attribute))
 {
   uint hit_kind = HitKind();
+  payload.surf_id = record.id;
   if (hit_kind == HIT_KIND_TRIANGLE_FRONT_FACE){
     payload.vol_ids.x = record.vols[0];
     payload.vol_ids.y = record.vols[1];
+    payload.next_vol = record.bf_vol;
   }
   else {
     payload.vol_ids.x = record.vols[1];
     payload.vol_ids.y = record.vols[0];
+    payload.next_vol = record.ff_vol;
   }
+  payload.hitDistance = RayTCurrent();
 }
 
 double3 dcross (in double3 a, in double3 b) { return double3(a.y*b.z-a.z*b.y, a.z*b.x-a.x*b.z, a.x*b.y-a.y*b.x); }
@@ -646,9 +670,9 @@ GPRT_INTERSECTION_PROGRAM(DPTrianglePlucker, (DPTriangleData, record))
   double v = plucker_coord0 * inverse_sum;
 
   if( u < 0.0 || v < 0.0 || (u+v) > 1.0 ) t = -1.0;
-
   if (t > tCurrent) return;
   if (t < tMin) return;
+  // printf("Distance: %f", t);
 
   // update current double precision thit
   gprt::store<double>(record.dpRays, fbOfs * 8 + 7, t);
@@ -656,7 +680,7 @@ GPRT_INTERSECTION_PROGRAM(DPTrianglePlucker, (DPTriangleData, record))
   DPAttribute attr;
   attr.bc = double2(u, v);
   float f32t = float(t);
-  if (double(f32t) < t) f32t = next_after(f32t);
+  // if (double(f32t) < t) f32t = next_after(f32t);
 
   // compute the triangle normal
   double3 norm = dcross(double3(v1 - v0), double3(v2 - v0));
@@ -669,6 +693,7 @@ GPRT_INTERSECTION_PROGRAM(DPTrianglePlucker, (DPTriangleData, record))
     hit_kind = HIT_KIND_TRIANGLE_FRONT_FACE;
   }
 
+  // printf("Reporting hit");
   ReportHit(f32t, hit_kind, attr);
 }
 
