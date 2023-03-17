@@ -288,11 +288,11 @@ int main(int argc, char** argv) {
   rayGenData->fbSize = fbSize;
   rayGenData->moveOrigin = false;
   if (useFloats) {
-  rayGenData->world = gprtAccelGetHandle(spvols.world_tlas_);
-  rayGenData->partTrees = gprtBufferGetHandle(spvols.tlas_buffer_);
+    rayGenData->world = gprtAccelGetHandle(spvols.world_tlas_);
+    rayGenData->partTrees = gprtBufferGetHandle(spvols.tlas_buffer_);
   } else {
-  rayGenData->world = gprtAccelGetHandle(dpvols.world_tlas_);
-  rayGenData->partTrees = gprtBufferGetHandle(dpvols.tlas_buffer_);
+    rayGenData->world = gprtAccelGetHandle(dpvols.world_tlas_);
+    rayGenData->partTrees = gprtBufferGetHandle(dpvols.tlas_buffer_);
   }
   rayGenData->aabbMin = float3(bbox.first.x, bbox.first.y, bbox.first.z);
   rayGenData->aabbMax = float3(bbox.second.x, bbox.second.y, bbox.second.z);

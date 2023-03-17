@@ -101,7 +101,7 @@ GPRT_RAYGEN_PROGRAM(DPRayGen, (RayGenData, record))
   SamplerState sampler = gprt::getSamplerHandle(record.colormapSampler);
 
   float previousT;
-  float nudge = 0.0;
+  float nudge = 0.001f;
   float4 color = float4(0.0f, 0.0f, 0.0f, 1.0f);
 
   for (int i = 0; i < MAX_DEPTH; i++) {
@@ -118,24 +118,72 @@ GPRT_RAYGEN_PROGRAM(DPRayGen, (RayGenData, record))
 
     // generate color using volume ID
     if (all(pixelID == centerID)) printf("Hit distance: %f", payload.hitDistance);
-    float dataValue = float(payload.vol_ids.x) / float(maxVolID);
-    float4 xf = surfaceColormap.SampleGrad(sampler, dataValue, 0.f, 0.f);
 
-    if (xf.w != 0.f) {
-      color = over(color, xf);
-      // if (color.a > .99) break;
-    }
-
+    // hit background
     if (payload.vol_ids.x == -2) {
-      color = float4(1.0f, 1.0f, 1.0f, 1.0f);
+      color = over(color, float4(0.0f, 0.0f, 0.0f, 1.0f));
+      break;
     }
+    else if (payload.vol_ids.x == -3) {
+      color = over(color, float4(0.0f, 0.0f, 0.0f, 1.0f));
+      break;
+    }
+    // hit IPC
+    else if (payload.vol_ids.x == record.complementID) {
+      if (record.moveOrigin)
+        rayDesc.Origin = rayDesc.Origin + rayDesc.Direction * (payload.hitDistance + nudge);
+      else
+        rayDesc.TMin = payload.hitDistance + nudge;
+        gprt::store(record.dpRays, fbOfs * 2 + 0, double4(rayDesc.Origin.x, rayDesc.Origin.y, rayDesc.Origin.z, rayDesc.TMin));
+        gprt::store(record.dpRays, fbOfs * 2 + 1, double4(rayDesc.Direction.x, rayDesc.Direction.y, rayDesc.Direction.z, rayDesc.TMax));
 
-    if (payload.vol_ids.x == -3) {
-      color = float4(0.0f, 0.0f, 0.0f, 1.0f);
+      gprt::Accel next = gprt::load<gprt::Accel>(record.partTrees, payload.next_vol);
+      world = gprt::getAccelHandle(next);
+      continue;
+    }
+    // hit GYD
+    else if (payload.vol_ids.x == record.graveyardID) {
+      if (record.moveOrigin)
+        rayDesc.Origin = rayDesc.Origin + rayDesc.Direction * (payload.hitDistance + nudge);
+      else
+        rayDesc.TMin = payload.hitDistance + nudge;
+        gprt::store(record.dpRays, fbOfs * 2 + 0, double4(rayDesc.Origin.x, rayDesc.Origin.y, rayDesc.Origin.z, rayDesc.TMin));
+        gprt::store(record.dpRays, fbOfs * 2 + 1, double4(rayDesc.Direction.x, rayDesc.Direction.y, rayDesc.Direction.z, rayDesc.TMax));
+
+      gprt::Accel next = gprt::load<gprt::Accel>(record.partTrees, payload.next_vol);
+      world = gprt::getAccelHandle(next);
+      continue;
+    }
+    else {
+      float dataValue = (float(maxVolID) - float(payload.vol_ids.x)) / float(maxVolID);
+      float4 xf = surfaceColormap.SampleGrad(sampler, dataValue, 0.f, 0.f);
+
+      if (xf.w != 0.f) {
+        color = over(color, xf);
+        if (color.a > .99) break;
+      }
+      color = float4(1.0f, 1.0f, 1.0f, 1.0f);
+      break;
+      if (record.moveOrigin)
+          rayDesc.Origin = rayDesc.Origin + rayDesc.Direction * (payload.hitDistance + nudge);
+        else
+          rayDesc.TMin = payload.hitDistance + nudge;
+          gprt::store(record.dpRays, fbOfs * 2 + 0, double4(rayDesc.Origin.x, rayDesc.Origin.y, rayDesc.Origin.z, rayDesc.TMin));
+          gprt::store(record.dpRays, fbOfs * 2 + 1, double4(rayDesc.Direction.x, rayDesc.Direction.y, rayDesc.Direction.z, rayDesc.TMax));
+
+      gprt::Accel next = gprt::load<gprt::Accel>(record.partTrees, payload.next_vol);
+      world = gprt::getAccelHandle(next);
     }
   }
 
-  gprt::store(record.fbPtr, fbOfs, gprt::make_bgra(color));
+  // Composite on top of everything else our user interface
+  Texture2D texture = gprt::getTexture2DHandle(record.guiTexture);
+  SamplerState guiSampler = gprt::getDefaultSampler();
+
+  float4 guiColor = texture.SampleGrad(guiSampler, screen, float2(0.f, 0.f), float2(0.f, 0.f));
+
+  float4 finalColor = over(guiColor, color);
+  gprt::store(record.fbPtr, fbOfs, gprt::make_bgra(finalColor));
 }
 
 GPRT_RAYGEN_PROGRAM(SPRayGen, (RayGenData, record))
@@ -163,7 +211,7 @@ GPRT_RAYGEN_PROGRAM(SPRayGen, (RayGenData, record))
   RaytracingAccelerationStructure world = gprt::getAccelHandle(record.world);
   world = gprt::getAccelHandle(record.world);
 
-  float4 color = float4(0.f, 0.f, 0.f, 0.f);
+  float4 color = float4(1.0f, 1.0f, 1.0f, 1.0f);
 
   uint32_t maxVolID = record.maxVolID;
 
@@ -279,7 +327,6 @@ GPRT_RAYGEN_PROGRAM(SPRayGen, (RayGenData, record))
   float4 guiColor = texture.SampleGrad(guiSampler, screen, float2(0.f, 0.f), float2(0.f, 0.f));
 
   float4 finalColor = over(guiColor, float4(color.r, color.g, color.b, 1.f));
-
   gprt::store(record.fbPtr, fbOfs, gprt::make_bgra(finalColor));
 }
 

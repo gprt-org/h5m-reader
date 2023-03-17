@@ -131,7 +131,6 @@ float4 over(float4 a, float4 b) {
 
 struct [raypayload] Payload
 {
-  // .x = moving out of / escaping from that volume
   // .y = moving into that volume
   int2 vol_ids       : read(caller) : write(miss, closesthit);
   int surf_id        : read(caller) : write(closesthit);
