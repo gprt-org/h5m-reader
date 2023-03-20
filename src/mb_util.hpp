@@ -249,7 +249,6 @@ struct MBVolumes {
   void create_geoms(GPRTContext context, GPRTGeomTypeOf<typename T::geom_data_type> g_type) {
     for (auto& volume : volumes()) {
       volume.create_geoms(context, g_type);
-
     }
   }
 

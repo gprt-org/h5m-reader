@@ -36,15 +36,16 @@ struct DPTriangleData
   alignas(16) gprt::Buffer aabbs;
   /*! array/buffer of double precision rays */
   alignas(16) gprt::Buffer dpRays;
-  alignas(8) int2 fbSize;
   /* ID of the surface (negative if triangle connecivity has been reversed)*/
-  alignas(4) int id;
+  alignas(4) int32_t id;
+  /*! acceleration data structure for the volume on the front face */
+  alignas(4) int32_t ff_vol;
+  /*! acceleration data structure for the volume on the back face */
+  alignas(4) int32_t bf_vol;
+  /*! frame buffer size */
+  alignas(8) int2 fbSize;
   /*! volume on the forward (front) and reverse (back) side of the surface */
   alignas(8) int2 vols;
-  /*! acceleration data structure for the volume on the front face */
-  alignas(4) int ff_vol;
-  /*! acceleration data structure for the volume on the back face */
-  alignas(4) int bf_vol;
 };
 
 struct SPTriangleData

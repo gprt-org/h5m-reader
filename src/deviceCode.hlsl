@@ -101,13 +101,13 @@ GPRT_RAYGEN_PROGRAM(DPRayGen, (RayGenData, record))
   SamplerState sampler = gprt::getSamplerHandle(record.colormapSampler);
 
   float previousT;
-  float nudge = 0.001f;
-  float4 color = float4(0.0f, 0.0f, 0.0f, 1.0f);
+  float nudge = 0.0f;
+  float4 color = float4(0.0f, 0.0f, 0.0f, 0.0f);
 
   for (int i = 0; i < MAX_DEPTH; i++) {
     TraceRay(
       world, // the tree
-      RAY_FLAG_NONE, // ray flags
+      RAY_FLAG_CULL_FRONT_FACING_TRIANGLES, // ray flags
       0xff, // instance inclusion mask
       0, // ray type
       1, // number of ray types
@@ -116,8 +116,14 @@ GPRT_RAYGEN_PROGRAM(DPRayGen, (RayGenData, record))
       payload // the payload IO
     );
 
-    // generate color using volume ID
-    if (all(pixelID == centerID)) printf("Hit distance: %f", payload.hitDistance);
+    // if (all(pixelID == centerID)) {
+    //   printf("\nHit %i: \n"
+    //          "Center: hit surface %i. "
+    //          "From vol ID is %i \n"
+    //          "Next vol ID is %i \n"
+    //          "Next vol idx: %i\n"
+    //          "Distance: %f\n", i, payload.surf_id, payload.vol_ids.y, payload.vol_ids.x, payload.next_vol, payload.hitDistance);
+    // }
 
     // hit background
     if (payload.vol_ids.x == -2) {
@@ -134,8 +140,9 @@ GPRT_RAYGEN_PROGRAM(DPRayGen, (RayGenData, record))
         rayDesc.Origin = rayDesc.Origin + rayDesc.Direction * (payload.hitDistance + nudge);
       else
         rayDesc.TMin = payload.hitDistance + nudge;
-        gprt::store(record.dpRays, fbOfs * 2 + 0, double4(rayDesc.Origin.x, rayDesc.Origin.y, rayDesc.Origin.z, rayDesc.TMin));
-        gprt::store(record.dpRays, fbOfs * 2 + 1, double4(rayDesc.Direction.x, rayDesc.Direction.y, rayDesc.Direction.z, rayDesc.TMax));
+
+      gprt::store(record.dpRays, fbOfs * 2 + 0, double4(rayDesc.Origin.x, rayDesc.Origin.y, rayDesc.Origin.z, rayDesc.TMin));
+      gprt::store(record.dpRays, fbOfs * 2 + 1, double4(rayDesc.Direction.x, rayDesc.Direction.y, rayDesc.Direction.z, rayDesc.TMax));
 
       gprt::Accel next = gprt::load<gprt::Accel>(record.partTrees, payload.next_vol);
       world = gprt::getAccelHandle(next);
@@ -155,26 +162,29 @@ GPRT_RAYGEN_PROGRAM(DPRayGen, (RayGenData, record))
       continue;
     }
     else {
-      float dataValue = (float(maxVolID) - float(payload.vol_ids.x)) / float(maxVolID);
+      float dataValue = float(payload.vol_ids.x) / float(maxVolID);
       float4 xf = surfaceColormap.SampleGrad(sampler, dataValue, 0.f, 0.f);
 
       if (xf.w != 0.f) {
         color = over(color, xf);
         if (color.a > .99) break;
       }
-      color = float4(1.0f, 1.0f, 1.0f, 1.0f);
+
       break;
       if (record.moveOrigin)
           rayDesc.Origin = rayDesc.Origin + rayDesc.Direction * (payload.hitDistance + nudge);
         else
           rayDesc.TMin = payload.hitDistance + nudge;
-          gprt::store(record.dpRays, fbOfs * 2 + 0, double4(rayDesc.Origin.x, rayDesc.Origin.y, rayDesc.Origin.z, rayDesc.TMin));
-          gprt::store(record.dpRays, fbOfs * 2 + 1, double4(rayDesc.Direction.x, rayDesc.Direction.y, rayDesc.Direction.z, rayDesc.TMax));
+
+      gprt::store(record.dpRays, fbOfs * 2 + 0, double4(rayDesc.Origin.x, rayDesc.Origin.y, rayDesc.Origin.z, rayDesc.TMin));
+      gprt::store(record.dpRays, fbOfs * 2 + 1, double4(rayDesc.Direction.x, rayDesc.Direction.y, rayDesc.Direction.z, rayDesc.TMax));
 
       gprt::Accel next = gprt::load<gprt::Accel>(record.partTrees, payload.next_vol);
       world = gprt::getAccelHandle(next);
     }
   }
+
+  if (any(pixelID == centerID)) color = float4(1.f, 1.f, 1.f, 1.f) - color;
 
   // Composite on top of everything else our user interface
   Texture2D texture = gprt::getTexture2DHandle(record.guiTexture);
@@ -182,7 +192,7 @@ GPRT_RAYGEN_PROGRAM(DPRayGen, (RayGenData, record))
 
   float4 guiColor = texture.SampleGrad(guiSampler, screen, float2(0.f, 0.f), float2(0.f, 0.f));
 
-  float4 finalColor = over(guiColor, color);
+  float4 finalColor = over(guiColor, float4(color.r, color.g, color.b, 1.f));
   gprt::store(record.fbPtr, fbOfs, gprt::make_bgra(finalColor));
 }
 
@@ -209,9 +219,8 @@ GPRT_RAYGEN_PROGRAM(SPRayGen, (RayGenData, record))
 
   // start by firing at the entire scene
   RaytracingAccelerationStructure world = gprt::getAccelHandle(record.world);
-  world = gprt::getAccelHandle(record.world);
 
-  float4 color = float4(1.0f, 1.0f, 1.0f, 1.0f);
+  float4 color = float4(0.0f, 0.0f, 0.0f, 0.0f);
 
   uint32_t maxVolID = record.maxVolID;
 
@@ -246,14 +255,14 @@ GPRT_RAYGEN_PROGRAM(SPRayGen, (RayGenData, record))
       payload // the payload IO
     );
 
-    // MESSAGE(centerID.x, centerID.y, "Next vol: %i", payload.next_vol);
-    if (all(pixelID == centerID)) {
-      printf("Center: hit surface %i. Next vol ID is %i", payload.surf_id, payload.vol_ids.x);
-      printf("Next vol idx: %i", payload.next_vol);
-      printf("Distance: %f", payload.hitDistance);
-    }
-
-    // float3 color = normalize(float3(Random(payload.vol_ids.x), Random(payload.vol_ids.x + 1), Random(payload.vol_ids.x + 1)));
+    // if (all(pixelID == centerID)) {
+    //   printf("\nHit %i: \n"
+    //          "Center: hit surface %i. "
+    //          "From vol ID is %i \n"
+    //          "Next vol ID is %i \n"
+    //          "Next vol idx: %i\n"
+    //          "Distance: %f\n", i, payload.surf_id, payload.vol_ids.y, payload.vol_ids.x, payload.next_vol, payload.hitDistance);
+    // }
 
     // hit background
     if (payload.vol_ids.y == -2) {
@@ -262,7 +271,7 @@ GPRT_RAYGEN_PROGRAM(SPRayGen, (RayGenData, record))
     }
 
     else if (payload.vol_ids.y == -3) {
-      color = over(color, float4(0.0f, 0.0f, 0.0f, 1.f));
+      color = over(color, float4(0.0f, 0.0f, 0.0f, 1.0f));
       break;
     }
 
@@ -727,7 +736,7 @@ GPRT_INTERSECTION_PROGRAM(DPTrianglePlucker, (DPTriangleData, record))
   DPAttribute attr;
   attr.bc = double2(u, v);
   float f32t = float(t);
-  // if (double(f32t) < t) f32t = next_after(f32t);
+  if (double(f32t) < t) f32t = next_after(f32t);
 
   // compute the triangle normal
   double3 norm = dcross(double3(v1 - v0), double3(v2 - v0));
